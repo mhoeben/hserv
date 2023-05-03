@@ -4,7 +4,7 @@
 
 Hserv is a simple but flexible HTTP server that serves as the server companion
 to utilities such as Wget and Curl. The core of the application is a [single
-header implementation](include/hserver.h) of an HTTP/1.1 server that supports
+header implementation](include/hserv.h) of an HTTP/1.1 server that supports
 both unsecure and secure socket communication using OpenSSL. The server has
 a simple, yet flexible, method and transfer-encoding agnostic API.
 
