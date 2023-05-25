@@ -1,4 +1,4 @@
-# Hserv - A companion to Wget.
+# Hserv - A simple HTTP server command line utility
 
 ## Description
 
