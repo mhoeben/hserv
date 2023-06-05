@@ -31,7 +31,7 @@ project("hserv")
 #
 # Dependencies
 #
-find_package(OpenSSL OPTIONAL)
+find_package(OpenSSL)
 
 if (HSERV_ENABLE_UNITTESTS)
     add_subdirectory(unittests)

@@ -99,7 +99,7 @@ static void* hbuffer_realloc(hbuffer_t* buffer, size_t capacity, int shrink)
     return data;
 }
 
-int hbuffer_vappendf(hbuffer_t* buffer, char const* format, va_list ap)
+static int hbuffer_vappendf(hbuffer_t* buffer, char const* format, va_list ap)
 {
     ssize_t length;
 
