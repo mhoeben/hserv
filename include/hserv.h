@@ -161,20 +161,22 @@ typedef struct hserv_s hserv_t;
 
 typedef struct hserv_session_s hserv_session_t;
 
-typedef int(*hserv_event_callback_t)(hserv_t* hserv, struct epoll_event* event);
+typedef int(*hserv_event_callback_t)(
+    hserv_t* hserv, struct epoll_event* event);
 
-typedef int (*hserv_accept_callback_t)(hserv_t* hserv, hserv_session_t* session);
-
-typedef int(*hserv_request_start_callback_t)(
+typedef int (*hserv_accept_callback_t)(
     hserv_t* hserv, hserv_session_t* session);
 
-typedef int(*hserv_request_callback_t)(hserv_t* hserv,
+typedef int(*hserv_transaction_start_callback_t)(
+    hserv_t* hserv, hserv_session_t* session);
+
+typedef int(*hserv_request_content_callback_t)(hserv_t* hserv,
     hserv_session_t* session, void* buffer, size_t size, size_t more);
 
-typedef int(*hserv_response_callback_t)(hserv_t* hserv,
+typedef int(*hserv_response_content_callback_t)(hserv_t* hserv,
     hserv_session_t* session, void const* buffer, size_t size, size_t more);
 
-typedef void(*hserv_request_end_callback_t)(
+typedef void(*hserv_transaction_end_callback_t)(
     hserv_t* hserv, hserv_session_t* session, int failed);
 
 typedef int(*hserv_session_interrupt_callback_t)(
@@ -184,8 +186,8 @@ typedef struct hserv_config_s
 {
     struct sockaddr                 binding __attribute__ ((aligned (4)));
     hserv_accept_callback_t         accept_callback;
-    hserv_request_start_callback_t  request_start_callback;
-    hserv_request_end_callback_t    request_end_callback;
+    hserv_transaction_start_callback_t  transaction_start_callback;
+    hserv_transaction_end_callback_t    transaction_end_callback;
 #ifdef HSERV_HAVE_OPENSSL
     int                             secure;
     char const*                     certificate_file;
@@ -202,12 +204,12 @@ typedef struct hserv_event_s
 } hserv_event_t;
 
 /*
- * Initializes an hserv config structure with defaults and the request start
- * and end callbacks.
+ * Initializes an hserv config structure with defaults and the transaction
+ * start and end callbacks.
  */
 HSERV_VISIBILITY void hserv_init(hserv_config_t* config,
-    hserv_request_start_callback_t request_start_callback,
-    hserv_request_end_callback_t request_end_callback);
+    hserv_transaction_start_callback_t transaction_start_callback,
+    hserv_transaction_end_callback_t transaction_end_callback);
 
 /*
  * Initializes the config's binding structure with a IPv4 port and address.
@@ -299,7 +301,8 @@ HSERV_VISIBILITY int hserv_poll(hserv_t* hserv);
 /*
  * Get a reason string for given status code.
  */
-HSERV_VISIBILITY char const* hserv_get_reason_string(hserv_status_code_t status_code);
+HSERV_VISIBILITY char const* hserv_get_reason_string(
+    hserv_status_code_t status_code);
 
 /*
  * Parses HTTP header fields. The header string shall not include a start-line
@@ -451,7 +454,7 @@ HSERV_VISIBILITY size_t hserv_request_get_content_length(
  */
 HSERV_VISIBILITY int hserv_request_receive(hserv_t* hserv,
     hserv_session_t* session, void* buffer, size_t capacity,
-    hserv_request_callback_t callback);
+    hserv_request_content_callback_t callback);
 
 /*
  * Reponds to the passed request with given status code, reason and fields.
@@ -518,7 +521,7 @@ HSERV_VISIBILITY int hserv_respond(hserv_t* hserv,
  */
 HSERV_VISIBILITY int hserv_response_send(hserv_t* hserv,
     hserv_session_t* session, void const* buffer, size_t size,
-    hserv_response_callback_t callback);
+    hserv_response_content_callback_t callback);
 
 #ifdef HSERV_HAVE_OPENSSL
 /*
@@ -590,7 +593,8 @@ HSERV_VISIBILITY void* hserv_session_get_user_data(
  * After the upgrade the file descriptor (and SSL structure) are the
  * responsibility of the user.
  */
-HSERV_VISIBILITY int hserv_session_upgraded(hserv_t* hserv, hserv_session_t* session);
+HSERV_VISIBILITY int hserv_session_upgraded(
+    hserv_t* hserv, hserv_session_t* session);
 
 #endif /* HSERV_H */
 
@@ -677,8 +681,8 @@ struct hserv_session_s
     hserv_event_t interrupt;
     hserv_session_interrupt_callback_t interrupt_callback;
 
-    hserv_request_callback_t request_callback;
-    hserv_response_callback_t response_callback;
+    hserv_request_content_callback_t request_content_callback;
+    hserv_response_content_callback_t response_content_callback;
 
     struct sockaddr peer;
     hserv_event_t socket;
@@ -688,6 +692,7 @@ struct hserv_session_s
 
 #define HSERV_FLAGS_CHUNK_FIRST     0x01
 #define HSERV_FLAGS_CHUNK_LAST      0x02
+#define HSERV_FLAGS_CHUNK_MASK      0x03
 #define HSERV_FLAGS_HEAD_REQUEST    0x04
 
     int8_t flags;
@@ -918,8 +923,8 @@ error:
     return -1;
 }
 
-static int hserv_timer_set(hserv_event_t const* event, time_t value_sec, long value_nsec,
-    time_t interval_sec, long interval_nsec)
+static int hserv_timer_set(hserv_event_t const* event,
+    time_t value_sec, long value_nsec, time_t interval_sec, long interval_nsec)
 {
     struct itimerspec spec;
     spec.it_value.tv_sec = value_sec;
@@ -1042,7 +1047,8 @@ static char* hserv_header_value_trim(char* value)
 
 static int hserv_header_fields_terminate(hserv_session_t* session)
 {
-    /* Check \r\n fits in the remaining space in the session's headers buffer. */
+    /* Check \r\n fits in the remaining space in the session's */
+    /* headers buffer. */
     if (session->header_length + 2 > sizeof(session->header_buffer)) {
         return -1;
     }
@@ -1054,13 +1060,14 @@ static int hserv_header_fields_terminate(hserv_session_t* session)
     return 0;
 }
 
-static int hserv_request_callback(hserv_t* hserv,
+static int hserv_request_content_callback(hserv_t* hserv,
     hserv_session_t* session, void* buffer, size_t buffer_size, size_t more)
 {
-    hserv_request_callback_t callback = session->request_callback;
+    hserv_request_content_callback_t callback =
+        session->request_content_callback;
 
     /* Reset receive process. */
-    session->request_callback = NULL;
+    session->request_content_callback = NULL;
     session->buffer_capacity = 0;
     session->buffer_size = 0;
     session->buffer = NULL;
@@ -1069,13 +1076,14 @@ static int hserv_request_callback(hserv_t* hserv,
     return callback(hserv, session, buffer, buffer_size, more);
 }
 
-static int hserv_response_callback(hserv_t* hserv,
-    hserv_session_t* session, void const* buffer, size_t buffer_size, size_t more)
+static int hserv_response_content_callback(hserv_t* hserv, hserv_session_t* session,
+    void const* buffer, size_t buffer_size, size_t more)
 {
-    hserv_response_callback_t callback = session->response_callback;
+    hserv_response_content_callback_t callback =
+        session->response_content_callback;
 
     /* Reset send process. */
-    session->response_callback = NULL;
+    session->response_content_callback = NULL;
     session->buffer_size = 0;
     session->buffer = NULL;
 
@@ -1089,7 +1097,7 @@ static int hserv_session_next_request(hserv_t* hserv, hserv_session_t* session)
 {
     /* Callback end of request. */
     if (session->callback_request_end) {
-        hserv->config.request_end_callback(hserv, session, 0);
+        hserv->config.transaction_end_callback(hserv, session, 0);
     }
 
     /* Close session? */
@@ -1107,8 +1115,8 @@ static int hserv_session_next_request(hserv_t* hserv, hserv_session_t* session)
     session->request_version[0] = 0;
     session->request_fields = NULL;
 
-    session->request_callback = NULL;
-    session->response_callback = NULL;
+    session->request_content_callback = NULL;
+    session->response_content_callback = NULL;
 
     session->socket.callback = hserv_request_on_header;
 
@@ -1399,7 +1407,8 @@ static int hserv_request_on_header(hserv_t* hserv,
                  */
                 if (-1 != content_length) {
                     /* Bad request. */
-                    hserv_respond_error(hserv, session, HSERV_SC_BAD_REQUEST, 1);
+                    hserv_respond_error(
+                        hserv, session, HSERV_SC_BAD_REQUEST, 1);
                     return 0;
                 }
 
@@ -1490,7 +1499,7 @@ static int hserv_request_on_header(hserv_t* hserv,
     }
 
     /* Callback request. */
-    if (hserv->config.request_start_callback(hserv, session) < 0) {
+    if (hserv->config.transaction_start_callback(hserv, session) < 0) {
         /* Internal server error. */
         hserv_respond_error(hserv, session, HSERV_SC_INTERNAL_SERVER_ERROR, 1);
         return 0;
@@ -1550,7 +1559,7 @@ static int hserv_request_on_content_length(hserv_t* hserv,
     size_t more = session->content_length - session->progress;
 
     /* Callback with content received so far. */
-    if (hserv_request_callback(hserv,
+    if (hserv_request_content_callback(hserv,
             session, session->buffer, session->buffer_size, more) < 0) {
         /* Internal server error. */
         hserv_respond_error(hserv, session, HSERV_SC_INTERNAL_SERVER_ERROR, 1);
@@ -1603,7 +1612,7 @@ static int hserv_request_on_chunked_header(hserv_t* hserv,
     /* Callback with content recevied and next chunk length, unless it is */
     /* the last chunk. The callback will then be after receiving the trailer. */
     if (session->content_length > 0
-     && hserv_request_callback(hserv, session,
+     && hserv_request_content_callback(hserv, session,
         session->buffer, session->buffer_size, session->content_length) < 0) {
         /* Internal server error. */
         hserv_respond_error(hserv, session, HSERV_SC_INTERNAL_SERVER_ERROR, 1);
@@ -1640,10 +1649,11 @@ static int hserv_request_on_chunked(hserv_t* hserv,
     /* a buffer that is not large enough to receive the complete chunk. */
     if (more > 0) {
         /* Callback with content received so far. */
-        if (hserv_request_callback(hserv,
+        if (hserv_request_content_callback(hserv,
                 session, session->buffer, session->buffer_size, more) < 0) {
             /* Internal server error. */
-            hserv_respond_error(hserv, session, HSERV_SC_INTERNAL_SERVER_ERROR, 1);
+            hserv_respond_error(hserv, session,
+                HSERV_SC_INTERNAL_SERVER_ERROR, 1);
             return 0;
         }
 
@@ -1724,7 +1734,7 @@ static int hserv_request_on_chunked_trailer(hserv_t* hserv,
         session->request_fields = session->header_buffer;
     }
 
-    if (hserv_request_callback(hserv, session,
+    if (hserv_request_content_callback(hserv, session,
         session->buffer, session->buffer_size, session->content_length) < 0) {
         /* Internal server error. */
         hserv_respond_error(hserv, session, HSERV_SC_INTERNAL_SERVER_ERROR, 1);
@@ -1816,7 +1826,7 @@ static int hserv_response_on_content_length(hserv_t* hserv,
     size_t more = session->content_length;
 
     /* Callback with content send so far. */
-    if (hserv_response_callback(hserv, session,
+    if (hserv_response_content_callback(hserv, session,
             session->buffer, session->buffer_size, more) < 0) {
         hserv_session_destroy(hserv, session);
         return -1;
@@ -1851,7 +1861,7 @@ static int hserv_response_on_chunked_header_trailer(hserv_t* hserv,
         /* of the previous chunk as well as the header of the current. */
         /* Last chunks also contain the trailer following the last chunk. */
         int r;
-        switch ((HSERV_FLAGS_CHUNK_FIRST|HSERV_FLAGS_CHUNK_LAST) & session->flags) {
+        switch (HSERV_FLAGS_CHUNK_MASK & session->flags) {
         case HSERV_FLAGS_CHUNK_FIRST:
             r = sprintf(session->header_buffer, "%zx\r\n",
                             session->buffer_size);
@@ -1919,7 +1929,7 @@ static int hserv_response_on_chunked(hserv_t* hserv,
         (hserv_session_t*)hserv_event_user_data(epoll_event);
 
     /* Callback for next chunk. */
-    if (hserv_response_callback(hserv, session,
+    if (hserv_response_content_callback(hserv, session,
         session->buffer, session->buffer_size, HSERV_CHUNKED) < 0) {
         hserv_session_destroy(hserv, session);
         return -1;
@@ -2017,7 +2027,7 @@ static void hserv_session_destroy(hserv_t* hserv, hserv_session_t* session)
     }
 
     if (session->callback_request_end) {
-        hserv->config.request_end_callback(hserv, session, 1);
+        hserv->config.transaction_end_callback(hserv, session, 1);
     }
 
 #ifdef HSERV_HAVE_OPENSSL
@@ -2130,12 +2140,12 @@ static int hserv_run(hserv_t* hserv, int timeout)
  * Public
  */
 void hserv_init(hserv_config_t* config,
-    hserv_request_start_callback_t request_start_callback,
-    hserv_request_end_callback_t request_end_callback)
+    hserv_transaction_start_callback_t transaction_start_callback,
+    hserv_transaction_end_callback_t transaction_end_callback)
 {
     assert(NULL != config);
-    assert(NULL != request_start_callback);
-    assert(NULL != request_end_callback);
+    assert(NULL != transaction_start_callback);
+    assert(NULL != transaction_end_callback);
 
     memset(config, 0, sizeof(*config));
 
@@ -2149,8 +2159,8 @@ void hserv_init(hserv_config_t* config,
 #else
     #error "unsupported socket family"
 #endif
-    config->request_start_callback = request_start_callback;
-    config->request_end_callback = request_end_callback;
+    config->transaction_start_callback = transaction_start_callback;
+    config->transaction_end_callback = transaction_end_callback;
 }
 
 int hserv_init_binding_ipv4(hserv_config_t* config,
@@ -2640,7 +2650,7 @@ size_t hserv_request_get_content_length(hserv_session_t const* session)
 
 int hserv_request_receive(hserv_t* hserv,
     hserv_session_t* session, void* buffer, size_t capacity,
-    hserv_request_callback_t callback)
+    hserv_request_content_callback_t callback)
 {
     assert(NULL != hserv);
     assert(NULL != session);
@@ -2648,8 +2658,8 @@ int hserv_request_receive(hserv_t* hserv,
     assert(capacity > 0);
     assert(NULL != callback);
 
-    assert(NULL == session->request_callback);
-    session->request_callback = callback;
+    assert(NULL == session->request_content_callback);
+    session->request_content_callback = callback;
 
     assert(NULL == session->buffer);
     session->buffer_capacity = capacity;
@@ -2658,7 +2668,7 @@ int hserv_request_receive(hserv_t* hserv,
 
     /* Resume receiving. */
     if (-1 == hserv_session_event_modify(hserv, session, EPOLLIN)) {
-        session->request_callback = NULL;
+        session->request_content_callback = NULL;
         session->buffer = NULL;
         session->buffer_capacity = 0;
         return -1;
@@ -2720,7 +2730,8 @@ int hserv_respond(hserv_t* hserv, hserv_session_t* session,
                 }
             }
 
-            if (-1 == hserv_header_field_append(session, fields[0], fields[1])) {
+            if (-1 == hserv_header_field_append(
+                        session, fields[0], fields[1])) {
                 return -1;
             }
 
@@ -2782,7 +2793,7 @@ int hserv_respond(hserv_t* hserv, hserv_session_t* session,
 
 int hserv_response_send(hserv_t* hserv,
     hserv_session_t* session, void const* buffer, size_t size,
-    hserv_response_callback_t callback)
+    hserv_response_content_callback_t callback)
 {
     assert(NULL != hserv);
     assert(NULL != session);
@@ -2803,7 +2814,7 @@ int hserv_response_send(hserv_t* hserv,
         size = session->content_length;
     }
 
-    session->response_callback = callback;
+    session->response_content_callback = callback;
     session->progress = 0;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-qual"
