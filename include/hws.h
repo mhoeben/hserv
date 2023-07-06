@@ -825,7 +825,7 @@ closed:
 
 static int hws_socket_on_maintenance(hws_socket_t* socket)
 {
-    // TODO.
+    /* TODO. */
     (void)socket;
     return 0;
 }

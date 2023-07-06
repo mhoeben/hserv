@@ -345,10 +345,10 @@ HSERV_VISIBILITY char const* hserv_header_field_find(
     char const* it, char const *name, char const** value);
 
 /*
- * Tests whether the field value has the given value, potentially separated
+ * Tests whether the field value contains the given value, potentially separated
  * from other values by given delim.
  */
-HSERV_VISIBILITY int hserv_header_field_value_has(
+HSERV_VISIBILITY int hserv_header_field_value_contains(
     char const* field_value, char const *value, char const* delim);
 
 /*
@@ -356,7 +356,7 @@ HSERV_VISIBILITY int hserv_header_field_value_has(
  * that contains the given value, either as the field's value or in a list
  * separated by delim.
  */
-HSERV_VISIBILITY int hserv_header_field_has(
+HSERV_VISIBILITY int hserv_header_field_contains(
     const char* it, char const* name, char const* value, char const* delim);
 
 /*
@@ -376,18 +376,27 @@ HSERV_VISIBILITY ssize_t hserv_header_fields_copy(
 
 /*
  * Returns the request's method.
+ *
+ * Note that the request's method is only valid for the duration of the
+ * request callback.
  */
 HSERV_VISIBILITY char const* hserv_request_get_method(
     hserv_session_t const* session);
 
 /*
  * Returns the request's target.
+ *
+ * Note that the request's target is only valid for the duration of the
+ * request callback.
  */
 HSERV_VISIBILITY char const* hserv_request_get_target(
     hserv_session_t const* session);
 
 /*
  * Return's the request's version, e.g. HTTP/1.1.
+ *
+ * Note that the request's version is only valid for the duration of the
+ * request callback.
  */
 HSERV_VISIBILITY char const* hserv_request_get_version(
     hserv_session_t const* session);
@@ -402,7 +411,7 @@ HSERV_VISIBILITY char const* hserv_request_get_version(
  * after a response is generated.
  *
  * Returns an header iterator to be used with hserv_header_fields_iterate(),
- * hserv_header_field_find(), hserv_header_field_has()
+ * hserv_header_field_find(), hserv_header_field_contains()
  * or hserv_header_fields_copy().
  */
 HSERV_VISIBILITY char const* hserv_request_get_header_fields(
@@ -2500,7 +2509,7 @@ char const* hserv_header_field_find(
     while (1);
 }
 
-int hserv_header_field_value_has(
+int hserv_header_field_value_contains(
     char const* field_value, char const *value, char const* delim)
 {
     if (NULL != delim) {
@@ -2539,7 +2548,7 @@ int hserv_header_field_value_has(
     return 0;
 }
 
-int hserv_header_field_has(
+int hserv_header_field_contains(
     const char* it, char const* name, char const* value, char const* delim)
 {
     assert(NULL != it);
@@ -2554,7 +2563,7 @@ int hserv_header_field_has(
             return 0;
         }
 
-        switch (hserv_header_field_value_has(found, value, delim)) {
+        switch (hserv_header_field_value_contains(found, value, delim)) {
         case 1:
             return 1;
         case 0:
@@ -2724,7 +2733,7 @@ int hserv_respond(hserv_t* hserv, hserv_session_t* session,
                 session, "Transfer-Encoding", "chunked")) {
             return -1;
         }
-    } // else below
+    } /* else below */
     /*
      * RFC 9112 6.3.
      *

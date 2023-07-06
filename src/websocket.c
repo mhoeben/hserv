@@ -174,7 +174,7 @@ hserv_status_code_t websocket_is_upgrade(
     }
 
     if (NULL != hserv_header_field_find(fields, "Connection", &value)
-     && 1 != hserv_header_field_value_has(value, "Upgrade", ",")) {
+     && 1 != hserv_header_field_value_contains(value, "Upgrade", ",")) {
         return HSERV_SC_NOT_FOUND;
     }
 

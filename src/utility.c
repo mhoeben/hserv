@@ -176,7 +176,7 @@ ssize_t has_header_field_value(harray_t const* fields, char const* name,
 {
     for (size_t i = 0; i < fields->size; i += 2) {
         if (0 == strcasecmp(((char const**)fields->data)[i], name)) {
-            switch (hserv_header_field_value_has(
+            switch (hserv_header_field_value_contains(
                 ((char const**)fields->data)[i + 1], value, delim)) {
             case 1:
                 return i;
