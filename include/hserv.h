@@ -459,6 +459,8 @@ HSERV_VISIBILITY int hserv_request_receive(hserv_t* hserv,
 /*
  * Reponds to the passed request with given status code, reason and fields.
  * If reason is NULL, hserv picks the status code related reason from a table.
+ * The fields array shall be a NULL terminated array of name and value pairs.
+ *
  * Hserv automatically generates for each response the following fields:
  *
  * - Date
@@ -491,7 +493,7 @@ HSERV_VISIBILITY int hserv_request_receive(hserv_t* hserv,
 HSERV_VISIBILITY int hserv_respond(hserv_t* hserv,
     hserv_session_t* session, hserv_status_code_t status_code,
     char const* reason, char const* const fields[],
-    size_t content_length, void* content);
+    size_t content_length, void const* content);
 
 /*
  * Instruct hserv to send the data in the provided buffer of given size
@@ -2679,7 +2681,7 @@ int hserv_request_receive(hserv_t* hserv,
 
 int hserv_respond(hserv_t* hserv, hserv_session_t* session,
     hserv_status_code_t status_code, char const* reason,
-    char const* const fields[], size_t content_length, void* content)
+    char const* const fields[], size_t content_length, void const* content)
 {
     assert(NULL != hserv);
     assert(NULL != session);
@@ -2783,7 +2785,10 @@ int hserv_respond(hserv_t* hserv, hserv_session_t* session,
     session->progress = 0;
     if (NULL != content) {
         session->buffer_size = content_length;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-qual"
         session->buffer = (char*)content;
+#pragma GCC diagnostic pop
     }
 
     /* Modify socket events to start sending response. */
