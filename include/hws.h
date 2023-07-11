@@ -193,6 +193,11 @@ HWS_VISIBILITY void hws_socket_set_user_data(
 HWS_VISIBILITY void* hws_socket_get_user_data(hws_socket_t* socket);
 
 /*
+ * Gets the socket's state.
+ */
+HWS_VISIBILITY hws_state_t hws_socket_get_state(hws_socket_t* socket);
+
+/*
  * Instructs the socket to callback from the socket's thread context.
  *
  * Hws is not thread-safe. Hws's functions shall only be called from
@@ -1189,6 +1194,12 @@ void* hws_socket_get_user_data(hws_socket_t* socket)
 {
     assert(NULL != socket);
     return socket->user_data;
+}
+
+hws_state_t hws_socket_get_state(hws_socket_t* socket)
+{
+    assert(NULL != socket);
+    return socket->state;
 }
 
 int hws_socket_interrupt(hws_socket_t* socket)
