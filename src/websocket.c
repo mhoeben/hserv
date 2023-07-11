@@ -71,11 +71,11 @@ static int on_stdin(hserv_t* hserv, struct epoll_event* event)
     }
 
     if (0 == feof(stdin)) { 
-        opcode = HWS_CLOSE;
+        opcode = HWS_OPCODE_CLOSE;
     }
     else {
         // TODO make configurable.
-        opcode = HWS_BINARY;
+        opcode = HWS_OPCODE_BINARY;
     }
 
     if (-1 == hws_socket_send(server->hws, server->socket, opcode,
@@ -97,9 +97,9 @@ static int on_receive_header(hws_t* hws, hws_socket_t* socket,
     (void)flags;
 
     switch (opcode) {
-    case HWS_TEXT:
-    case HWS_BINARY:
-    case HWS_CLOSE:
+    case HWS_OPCODE_TEXT:
+    case HWS_OPCODE_BINARY:
+    case HWS_OPCODE_CLOSE:
         break;
 
     default:
@@ -119,15 +119,15 @@ static int on_received(hws_t* hws, hws_socket_t* socket,
     state_t* state = hws_socket_get_user_data(socket);
 
     switch (state->receive_opcode) {
-    case HWS_TEXT:
-    case HWS_BINARY:
+    case HWS_OPCODE_TEXT:
+    case HWS_OPCODE_BINARY:
         if (size != fwrite(buffer, 1, size, stdout)) {
             fprintf(stderr, "%s: failed to write to stdout (%s)\n", server->exec, strerror(errno));
             return -1;
         }
         break;
 
-    case HWS_CLOSE:
+    case HWS_OPCODE_CLOSE:
         server_stop(server);
         break;
 
@@ -266,9 +266,9 @@ int websocket_upgrade(server_t* server, hserv_session_t* session)
 
     hws_socket_callbacks_t callbacks;
     callbacks.interrupt = NULL;
-    callbacks.receive_header = on_receive_header;
-    callbacks.received = on_received;
-    callbacks.sent = on_sent;
+    callbacks.frame_header = on_receive_header;
+    callbacks.frame_received = on_received;
+    callbacks.frame_sent = on_sent;
     callbacks.closed = on_closed;
 #ifdef HWS_HAVE_OPENSSL
     server->socket = hws_socket_create(server->hws, fd, ssl, &callbacks);

@@ -54,17 +54,25 @@ extern "C"
 #define HWS_VISIBILITY extern
 #endif
 
+typedef enum hws_state_e
+{
+    HWS_STATE_CONNECTING,
+    HWS_STATE_OPEN,
+    HWS_STATE_CLOSING,
+    HWS_STATE_CLOSED
+} hws_state_t;
+
 /*
  * RFC 6455 5.2 opcodes.
  */
 typedef enum hws_opcode_e
 {
-    HWS_CONTINUATION = 0,
-    HWS_TEXT = 1,
-    HWS_BINARY = 2,
-    HWS_CLOSE = 8,
-    HWS_PING = 9,
-    HWS_PONG = 10
+    HWS_OPCODE_CONTINUATION = 0,
+    HWS_OPCODE_TEXT = 1,
+    HWS_OPCODE_BINARY = 2,
+    HWS_OPCODE_CLOSE = 8,
+    HWS_OPCODE_PING = 9,
+    HWS_OPCODE_PONG = 10
 } hws_opcode_t;
 
 #define HWS_FINAL   0x01    /* WebSocket FIN bit. */
@@ -76,11 +84,11 @@ typedef struct hws_socket_s hws_socket_t;
 typedef struct hws_socket_callbacks_s
 {
     int(*interrupt)(hws_t* hws, hws_socket_t* socket);
-    int(*receive_header)(hws_t* hws, hws_socket_t* socket,
+    int(*frame_header)(hws_t* hws, hws_socket_t* socket,
         hws_opcode_t opcode, size_t size, int flags);
-    int(*received)(hws_t* hws, hws_socket_t* socket,
+    int(*frame_received)(hws_t* hws, hws_socket_t* socket,
         void* buffer, size_t size);
-    int(*sent)(hws_t* hws, hws_socket_t* socket,
+    int(*frame_sent)(hws_t* hws, hws_socket_t* socket,
         void const* buffer, size_t size);
     void(*closed)(hws_t* hws, hws_socket_t* socket, int error);
 } hws_socket_callbacks_t;
@@ -209,7 +217,7 @@ HWS_VISIBILITY void hws_socket_receive_enable(hws_socket_t* socket);
 
 /*
  * Instructs hws to receive frame data to the provided buffer of given capacity.
- * This function shall be called after hws called the receive_header() callback.
+ * This function shall be called after hws called the message_header() callback.
  * The buffer's capacity shall be at least the size of the frame as indicated
  * by the callback's size argument. Upon complete reception of the frame, hws
  * calls the receive() callback with the filled buffer.
@@ -366,13 +374,16 @@ struct hws_socket_s
 #define HWS_RECEIVE_HEADER  0x01
 #define HWS_RECEIVE_PAYLOAD 0x02
 #define HWS_RECEIVE_MASK    0x03
+#define HWS_CLOSED_BY_PEER  0x04
 
 #define HWS_SEND_HEADER     0x10
 #define HWS_SEND_PAYLOAD    0x20
 #define HWS_SEND_MASK       0x30
+#define HWS_CLOSED_BY_USER  0x40
 
     hws_socket_callbacks_t callbacks;
 
+    hws_state_t state;
     uint8_t flags;
 
     uint8_t receive_disable;
@@ -559,6 +570,31 @@ static ssize_t hws_send(hws_t* hws, hws_socket_t* socket,
     return send(socket->socket.fd, buffer, size, 0);
 }
 
+static int hws_socket_send_update_close_state(
+    hws_socket_t* socket, hws_opcode_t opcode)
+{
+    /* Update state when receiving a close frame. */
+    if (HWS_OPCODE_CLOSE == opcode) {
+        if (socket->state < HWS_STATE_CLOSING) {
+            /* User initiated close sequence. */
+            socket->state = HWS_STATE_CLOSING;
+            socket->flags |= HWS_CLOSED_BY_USER;
+        }
+        else if (socket->state == HWS_STATE_CLOSING
+              && 0 != (HWS_CLOSED_BY_PEER & socket->flags)) {
+            /* User initiated close sequence. */
+            socket->state = HWS_STATE_CLOSED;
+        }
+        else {
+            /* Non-compliant close sequence. */
+            assert(0);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static void hws_mask(uint8_t* data, size_t size, uint8_t const* mask)
 {
     for (size_t i = 0; i < size; ++i) {
@@ -650,8 +686,27 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
                                  | (((size_t)ptr[9]) <<  0);
         }
 
+        /* Update state when receiving a close frame. */
+        if (HWS_OPCODE_CLOSE == opcode) {
+            if (socket->state < HWS_STATE_CLOSING) {
+                /* Peer initiated close sequence. */
+                socket->state = HWS_STATE_CLOSING;
+                socket->flags |= HWS_CLOSED_BY_PEER;
+            }
+            else if (socket->state == HWS_STATE_CLOSING
+                  && 0 != (HWS_CLOSED_BY_USER & socket->flags)) {
+                /* User initiated close sequence. */
+                socket->state = HWS_STATE_CLOSED;
+            }
+            else {
+                /* Non-compliant close sequence. */
+                assert(0);
+                goto closed;
+            }
+        }
+
         /* Callback. */
-        if (socket->callbacks.receive_header(hws, socket,
+        if (socket->callbacks.frame_header(hws, socket,
             opcode, socket->receive_size, flags) < 0) {
             return -1;
         }
@@ -671,7 +726,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         }
         else {
             /* Callback. */
-            if (socket->callbacks.received(hws, socket,
+            if (socket->callbacks.frame_received(hws, socket,
                 socket->receive_buffer, socket->receive_size) < 0) {
             }
 
@@ -724,7 +779,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         }
 
         /* Callback. */
-        if (socket->callbacks.received(hws, socket,
+        if (socket->callbacks.frame_received(hws, socket,
             socket->receive_buffer, socket->receive_size) < 0) {
         }
 
@@ -776,7 +831,7 @@ send:
             hws_event_modify(hws, socket);
 
             /* Callback send has been completed. */
-            if (socket->callbacks.sent(hws, socket,
+            if (socket->callbacks.frame_sent(hws, socket,
                     socket->send_buffer, socket->send_size) < 0) {
                 return -1;
             }
@@ -809,7 +864,7 @@ send:
         hws_event_modify(hws, socket);
 
         /* Callback send has been completed. */
-        if (socket->callbacks.sent(hws, socket,
+        if (socket->callbacks.frame_sent(hws, socket,
             socket->send_buffer, socket->send_size) < 0) {
             return -1;
         }
@@ -1077,6 +1132,7 @@ hws_socket_t* hws_socket_create(hws_t* hws, int fd,
 
     socket->callbacks = *callbacks;
 
+    socket->state = HWS_STATE_OPEN;
     socket->flags = HWS_RECEIVE_HEADER;
     socket->receive_header_length = 2;
 
@@ -1178,6 +1234,10 @@ int hws_socket_send(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode,
     assert(NULL == socket->send_buffer);
     assert(0 == size || buffer != NULL);
 
+    if (-1 == hws_socket_send_update_close_state(socket, opcode)) {
+        return -1;
+    }
+
     uint8_t* ptr = socket->send_header;
 
     ptr[0]  = 0 != (0 != final) ? 0x80 : 0x00;
@@ -1227,6 +1287,10 @@ int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode
     assert(0 == (socket->flags & HWS_SEND_MASK));
     assert(NULL == socket->send_buffer);
     assert(0 == size || buffer != NULL);
+
+    if (-1 == hws_socket_send_update_close_state(socket, opcode)) {
+        return -1;
+    }
 
     uint8_t* ptr = socket->receive_header;
 
