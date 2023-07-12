@@ -75,8 +75,8 @@ typedef enum hws_opcode_e
     HWS_OPCODE_PONG = 10
 } hws_opcode_t;
 
-#define HWS_FINAL   0x01    /* WebSocket FIN bit. */
-#define HWS_MASK    0x02    /* WebSocket MASK bit. */
+#define HWS_FLAG_FINAL  0x01    /* WebSocket FIN bit. */
+#define HWS_FLAG_MASK   0x02    /* WebSocket MASK bit. */
 
 typedef struct hws_s hws_t;
 typedef struct hws_socket_s hws_socket_t;
@@ -674,7 +674,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
 
         /* Deserialize header fields. */
         hws_opcode_t const opcode = (hws_opcode_t)(ptr[0] & 0xf);
-        int const flags = 0 != (ptr[0] & 0x80) ? HWS_FINAL : 0;
+        int const flags = 0 != (ptr[0] & 0x80) ? HWS_FLAG_FINAL : 0;
 
         /* Determine frame size. */
         if ((ptr[1] & 0x7f) < 126) {
