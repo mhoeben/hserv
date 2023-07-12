@@ -195,6 +195,11 @@ HWS_VISIBILITY void* hws_socket_get_user_data(hws_socket_t* socket);
 HWS_VISIBILITY hws_state_t hws_socket_get_state(hws_socket_t* socket);
 
 /*
+ * Sets the socket's nodelay option.
+ */
+HWS_VISIBILITY int hws_socket_set_nodelay(hws_socket_t* socket, int enable);
+
+/*
  * Instructs the socket to callback from the socket's thread context.
  *
  * Hws is not thread-safe. Hws's functions shall only be called from
@@ -296,6 +301,8 @@ HWS_VISIBILITY char* hws_generate_sec_websocket_accept(
 #ifdef HWS_IMPL
 
 #include <assert.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -1227,6 +1234,12 @@ hws_state_t hws_socket_get_state(hws_socket_t* socket)
 {
     assert(NULL != socket);
     return socket->state;
+}
+
+int hws_socket_set_nodelay(hws_socket_t* socket, int enable)
+{
+    assert(NULL != socket);
+    return setsockopt(socket->socket.fd, IPPROTO_TCP, TCP_NODELAY, (char *)&enable, sizeof(enable));
 }
 
 int hws_socket_interrupt(hws_socket_t* socket)
