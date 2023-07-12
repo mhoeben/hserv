@@ -87,7 +87,7 @@ typedef struct hws_socket_callbacks_s
         void* buffer, size_t size);
     int(*frame_sent)(hws_t* hws, hws_socket_t* socket,
         void const* buffer, size_t size);
-    void(*closed)(hws_t* hws, hws_socket_t* socket, int error);
+    void(*closed)(hws_t* hws, hws_socket_t* socket, int clean);
 } hws_socket_callbacks_t;
 
 /*
@@ -549,10 +549,14 @@ static ssize_t hws_recv(hws_t* hws, hws_socket_t* socket,
 #endif
     /* Returns > 0 for success, -1 for failure and 0 for closure. */
     r = recv(socket->socket.fd, buffer, size, 0);
-    if (-1 == r) {
-        return -1;
+    switch (r) { 
+    case -1:
+        return -1;  /* An error occurred. */
+    case 0:
+        return -2;  /* Socket closed. (See comment on SSL why -2.) */
+    default:
+        return r;   /* Received 'r' bytes. */
     }
-    return r > 0 ? r : -2;
 }
 
 static ssize_t hws_send(hws_t* hws, hws_socket_t* socket,
@@ -584,11 +588,15 @@ static int hws_socket_send_update_close_state(
             /* User initiated close sequence. */
             socket->state = HWS_STATE_CLOSING;
             socket->flags |= HWS_CLOSED_BY_USER;
+            return 0;
         }
         else if (socket->state == HWS_STATE_CLOSING
-              && 0 != (HWS_CLOSED_BY_PEER & socket->flags)) {
+              && HWS_CLOSED_BY_PEER == (HWS_CLOSED_BY_PEER & socket->flags)) {
             /* User initiated close sequence. */
             socket->state = HWS_STATE_CLOSED;
+            /* Disable receiving. */
+            hws_socket_receive_disable(socket);
+            return 1;
         }
         else {
             /* Non-compliant close sequence. */
@@ -623,6 +631,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
 {
     hws_socket_t* socket = (hws_socket_t*)hws_event_user_data(epoll_event);
     ssize_t bytes;
+    int closed_clean = 0;
 
     /* Cleanup socket if peer closed the socket. */
     if ((EPOLLHUP|EPOLLRDHUP) & epoll_event->events) {
@@ -635,11 +644,12 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         bytes = hws_recv(hws, socket,
             socket->receive_header + socket->receive_progress,
             socket->receive_header_length - socket->receive_progress);
-        if (bytes <= 0) {
-            if (-2 == bytes) {
-                goto closed;
-            }
-            return 0;
+        switch (bytes) {
+        case -2: goto closed;
+        case -1: return -1;
+        default:
+            assert(bytes >= 0);
+            break;
         }
 
         /* Update progress. */
@@ -699,14 +709,17 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
                 socket->flags |= HWS_CLOSED_BY_PEER;
             }
             else if (socket->state == HWS_STATE_CLOSING
-                  && 0 != (HWS_CLOSED_BY_USER & socket->flags)) {
+                  && HWS_CLOSED_BY_USER == (HWS_CLOSED_BY_USER & socket->flags)) {
                 /* User initiated close sequence. */
                 socket->state = HWS_STATE_CLOSED;
+                /* End of close sequence. */
+                closed_clean = 1;
+                goto closed;
             }
             else {
                 /* Non-compliant close sequence. */
                 assert(0);
-                goto closed;
+                return -1;
             }
         }
 
@@ -759,12 +772,14 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         bytes = hws_recv(hws, socket,
             socket->receive_buffer + socket->receive_progress,
             socket->receive_size - socket->receive_progress);
-        if (bytes <= 0) {
-            if (-2 == bytes) {
-                goto closed;
-            }
-            return -1;
+        switch (bytes) {
+        case -2: goto closed;
+        case -1: return -1;
+        default:
+            assert(bytes >= 0);
+            break;
         }
+
         /* Update progress. */
         socket->receive_progress += bytes;
 
@@ -840,6 +855,12 @@ send:
                     socket->send_buffer, socket->send_size) < 0) {
                 return -1;
             }
+
+            /* Closed? */
+            if (HWS_STATE_CLOSED == socket->state) {
+                closed_clean = 1;
+                goto closed;
+            }
         }
     }
 
@@ -873,12 +894,18 @@ send:
             socket->send_buffer, socket->send_size) < 0) {
             return -1;
         }
+
+        /* Closed? */
+        if (HWS_STATE_CLOSED == socket->state) {
+            closed_clean = 1;
+            goto closed;
+        }
     }
 
     return 0;
 
 closed:
-    socket->callbacks.closed(hws, socket, 0);
+    socket->callbacks.closed(hws, socket, closed_clean);
     hws_socket_destroy(hws, socket);
     return 0;
 }
@@ -907,7 +934,7 @@ static int hws_on_timer(hws_t* hws, struct epoll_event* event)
         it = it->next;
 
         if (r < 0) {
-            socket->callbacks.closed(hws, socket, 1);
+            socket->callbacks.closed(hws, socket, 0);
             hws_socket_destroy(hws, socket);
         }
     }
@@ -946,7 +973,7 @@ static int hws_run(hws_t* hws, int timeout)
                 /* Socket returned an error, notify user and destroy socket. */
                 hws_socket_t* socket =
                     (hws_socket_t*)hws_event_user_data(&event);
-                socket->callbacks.closed(hws, socket, 1);
+                socket->callbacks.closed(hws, socket, 0);
                 hws_socket_destroy(hws, socket);
             }
         }
