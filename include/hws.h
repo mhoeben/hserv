@@ -75,9 +75,6 @@ typedef enum hws_opcode_e
     HWS_OPCODE_PONG = 10
 } hws_opcode_t;
 
-#define HWS_FLAG_FINAL  0x01    /* WebSocket FIN bit. */
-#define HWS_FLAG_MASK   0x02    /* WebSocket MASK bit. */
-
 typedef struct hws_s hws_t;
 typedef struct hws_socket_s hws_socket_t;
 
@@ -85,7 +82,7 @@ typedef struct hws_socket_callbacks_s
 {
     int(*interrupt)(hws_t* hws, hws_socket_t* socket);
     int(*frame_header)(hws_t* hws, hws_socket_t* socket,
-        hws_opcode_t opcode, size_t size, int flags);
+        hws_opcode_t opcode, size_t size, int final);
     int(*frame_received)(hws_t* hws, hws_socket_t* socket,
         void* buffer, size_t size);
     int(*frame_sent)(hws_t* hws, hws_socket_t* socket,
@@ -365,6 +362,9 @@ typedef struct hws_event_s
     hws_event_callback_t callback;
     void* user_data;
 } hws_event_t;
+
+#define HWS_BIT_FIN    0x80 /* WebSocket FIN bit. */
+#define HWS_BIT_MASK   0x80 /* WebSocket MASK bit. */
 
 struct hws_socket_s
 {
@@ -661,7 +661,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         else {
             socket->receive_header_length = 2;
         }
-        if (0 != (0x80 & ptr[1])) {
+        if (0 != (HWS_BIT_MASK & ptr[1])) {
             socket->receive_header_length += 4;
         }
         if (socket->receive_progress < socket->receive_header_length) {
@@ -674,7 +674,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
 
         /* Deserialize header fields. */
         hws_opcode_t const opcode = (hws_opcode_t)(ptr[0] & 0xf);
-        int const flags = 0 != (ptr[0] & 0x80) ? HWS_FLAG_FINAL : 0;
+        int const final = 0 != (HWS_BIT_FIN & ptr[0]);
 
         /* Determine frame size. */
         if ((ptr[1] & 0x7f) < 126) {
@@ -712,7 +712,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
 
         /* Callback. */
         if (socket->callbacks.frame_header(hws, socket,
-            opcode, socket->receive_size, flags) < 0) {
+            opcode, socket->receive_size, final) < 0) {
             return -1;
         }
 
@@ -721,7 +721,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
             /* User provided a receive buffer? */
             if (NULL == socket->receive_buffer) {
                 /* Disable receiving. */
-                assert(0 == (HWS_RECEIVE_PAYLOAD & flags));
+                assert(0 == (HWS_RECEIVE_PAYLOAD & socket->flags));
                 if (-1 == hws_event_modify(hws, socket)) {
                     return -1;
                 }
@@ -778,7 +778,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         socket->receive_progress = 0;
 
         /* Masked? */
-        if (0 != (0x80 & socket->receive_header[1])) {
+        if (0 != (HWS_BIT_MASK & socket->receive_header[1])) {
             hws_mask(socket->receive_buffer, socket->receive_size,
                 socket->receive_header + socket->receive_header_length - 4);
         }
@@ -1251,7 +1251,7 @@ int hws_socket_send(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode,
 
     uint8_t* ptr = socket->send_header;
 
-    ptr[0]  = 0 != (0 != final) ? 0x80 : 0x00;
+    ptr[0]  = 0 != (0 != final) ? HWS_BIT_FIN : 0x00;
     ptr[0] |= (uint8_t)opcode;
     ptr[1]  = 0x00;
 
@@ -1305,9 +1305,9 @@ int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode
 
     uint8_t* ptr = socket->receive_header;
 
-    ptr[0]  = 0 != (0 != final) ? 0x80 : 0x00;
+    ptr[0]  = 0 != (0 != final) ? HWS_BIT_FIN : 0x00;
     ptr[0] |= (uint8_t)opcode;
-    ptr[1]  = 0x80;
+    ptr[1]  = HWS_BIT_MASK;
 
     if (size < 126) {
         ptr[1] |= (uint8_t)size;

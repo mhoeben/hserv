@@ -89,12 +89,13 @@ static int on_stdin(hserv_t* hserv, struct epoll_event* event)
 }
 
 static int on_receive_header(hws_t* hws, hws_socket_t* socket,
-    hws_opcode_t opcode, size_t size, int flags)
+    hws_opcode_t opcode, size_t size, int final)
 {
     server_t* server = hws_get_user_data(hws);
     state_t* state = hws_socket_get_user_data(socket);
 
-    (void)flags;
+    (void)final;
+    assert(1 == final); // TODO fragmentation
 
     switch (opcode) {
     case HWS_OPCODE_TEXT:
