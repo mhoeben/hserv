@@ -2863,7 +2863,7 @@ int hserv_session_get_peer(
     hserv_session_t* session, struct sockaddr *peer_address, socklen_t* length)
 {
     return getpeername(session->socket.fd,
-        (struct sockaddr*)&peer_address, length);
+        (struct sockaddr*)peer_address, length);
 }
 
 void hserv_session_set_interrupt_callback(
