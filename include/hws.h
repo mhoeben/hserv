@@ -717,8 +717,6 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
             }
             else if (socket->state == HWS_STATE_CLOSING
                   && HWS_CLOSED_BY_USER == (HWS_CLOSED_BY_USER & socket->flags)) {
-                /* User initiated close sequence. */
-                socket->state = HWS_STATE_CLOSED;
                 /* End of close sequence. */
                 closed_clean = 1;
                 goto closed;
@@ -912,6 +910,8 @@ send:
     return 0;
 
 closed:
+    socket->state = HWS_STATE_CLOSED;
+
     socket->callbacks.closed(hws, socket, closed_clean);
     hws_socket_destroy(hws, socket);
     return 0;
