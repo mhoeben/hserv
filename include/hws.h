@@ -197,7 +197,7 @@ HWS_VISIBILITY hws_state_t hws_socket_get_state(hws_socket_t* socket);
 /*
  * Gets the socket's peer socket address.
  */
-HSERV_VISIBILITY int hserv_socket_get_peer(
+HWS_VISIBILITY int hserv_socket_get_peer(
     hws_socket_t* socket, struct sockaddr *peer_addr, socklen_t* length);
 
 /*
