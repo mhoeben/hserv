@@ -542,6 +542,12 @@ HSERV_VISIBILITY int hserv_session_set_ssl(hserv_session_t* session, SSL* ssl);
 #endif
 
 /*
+ * Gets the session's peer socket address.
+ */
+HSERV_VISIBILITY int hserv_session_get_peer(
+    hserv_session_t* session, struct sockaddr *peer_addr, socklen_t* length);
+
+/*
  * Sets the session's interrupt callback.
  *
  * See hserv_session_interrupt() for a discussion how the interrupt facility
@@ -2852,6 +2858,13 @@ int hserv_session_set_ssl(hserv_session_t* session, SSL* ssl)
     return 1 == SSL_set_fd(session->ssl, session->socket.fd) ? 0 : -1;
 }
 #endif
+
+int hserv_session_get_peer(
+    hserv_session_t* session, struct sockaddr *peer_address, socklen_t* length)
+{
+    return getpeername(session->socket.fd,
+        (struct sockaddr*)&peer_address, length);
+}
 
 void hserv_session_set_interrupt_callback(
     hserv_session_t* session, hserv_session_interrupt_callback_t callback)
