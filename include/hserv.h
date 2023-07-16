@@ -1106,6 +1106,8 @@ static int hserv_session_next_request(hserv_t* hserv, hserv_session_t* session)
     /* Callback end of request. */
     if (session->callback_request_end) {
         hserv->config.transaction_end_callback(hserv, session, 0);
+        /* Prevent calling it again from hserv_session_destroy(). */
+        session->callback_request_end = 0;
     }
 
     /* Close session? */
