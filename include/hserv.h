@@ -1959,9 +1959,13 @@ static int hserv_response_on_chunked(hserv_t* hserv,
 
 static int hserv_session_on_maintenance(hserv_session_t* session)
 {
+// TODO investigate.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-overflow"
     /* Destroy session on timeout. */
     --session->timeout;
     return session->timeout >= 0 ? 0 : -1;
+#pragma GCC diagnostic pop
 }
 
 static hserv_session_t* hserv_session_create(hserv_t* hserv,
