@@ -209,6 +209,7 @@ int websocket_respond(hserv_t* hserv, hserv_session_t* session,
     harray_t const* response_fields, char const* subprotocol)
 {
     harray_t fields = HARRAY_INIT(response_fields->sizeof_type);
+    char* accept = NULL;
 
     /* Copy response header fields. */
     if (-1 == harray_copy(&fields, response_fields)) {
@@ -222,7 +223,7 @@ int websocket_respond(hserv_t* hserv, hserv_session_t* session,
     assert(NULL != key);
 
     /* Create a Sec-WebSocket-Accept value from the key. */
-    char* accept = hws_generate_sec_websocket_accept(key, strlen(key));
+    accept = hws_generate_sec_websocket_accept(key, strlen(key));
     if (NULL == accept) {
         goto internal_server_error;
     }

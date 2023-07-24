@@ -1444,6 +1444,9 @@ void hws_sha1(uint8_t *digest, void const *data, size_t size)
                 ++index;
                 count -= 8;
             }
+// TODO investigate.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-overflow"
             /* Fill out W with padding as needed */
             while (count >= 0)
             {
@@ -1451,6 +1454,7 @@ void hws_sha1(uint8_t *digest, void const *data, size_t size)
                 ++index;
                 count -= 8;
             }
+#pragma GCC diagnostic pop
         }
 
         /* Extend 16 32 bit words into 80 32 bit words. */
