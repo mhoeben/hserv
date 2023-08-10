@@ -1166,7 +1166,8 @@ static int hserv_request_receive_headers(hserv_t* hserv,
     /* Destroy session if the socket is in error state (EPOLLHUP) or the */
     /* peer closed the socket (EPOLLRDHUP). There is no use in */
     /* receiving a request when the response cannot be sent. */
-    if (0 == ((EPOLLHUP|EPOLLRDHUP) & epoll_event->events)) {
+    /* Cleanup session if peer closed the socket. */
+    if (0 != ((EPOLLHUP|EPOLLRDHUP) & epoll_event->events)) {
         hserv_session_destroy(hserv, session);
         return 0;
     }
