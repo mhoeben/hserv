@@ -841,8 +841,8 @@ static int hserv_session_event_modify_ssl(
 
     result = SSL_get_error(session->ssl, result);
     switch (result) {
-    case SSL_ERROR_WANT_READ:   epoll_event.events = EPOLLIN; break;
-    case SSL_ERROR_WANT_WRITE:  epoll_event.events = EPOLLOUT; break;
+    case SSL_ERROR_WANT_READ:   epoll_event.events = EPOLLIN|EPOLLRDHUP; break;
+    case SSL_ERROR_WANT_WRITE:  epoll_event.events = EPOLLOUT|EPOLLRDHUP; break;
     default:
         return -1;
     }
