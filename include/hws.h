@@ -445,7 +445,7 @@ static int hws_event_add(hws_t* hws, hws_event_t* event, uint32_t events)
 static int hws_event_modify(hws_t* hws, hws_socket_t* socket)
 {
     struct epoll_event epoll_event;
-    epoll_event.events = EPOLLRDHUP;
+    epoll_event.events = 0;
     epoll_event.data.ptr = &socket->socket;
 
     if (0 != (HWS_RECEIVE_MASK & socket->flags)) {
@@ -467,8 +467,8 @@ static int hws_event_modify_ssl(
 
     result = SSL_get_error(socket->ssl, result);
     switch (result) {
-    case SSL_ERROR_WANT_READ:   epoll_event.events = EPOLLIN|EPOLLRDHUP; break;
-    case SSL_ERROR_WANT_WRITE:  epoll_event.events = EPOLLOUT|EPOLLRDHUP; break;
+    case SSL_ERROR_WANT_READ:   epoll_event.events = EPOLLIN; break;
+    case SSL_ERROR_WANT_WRITE:  epoll_event.events = EPOLLOUT; break;
     /* Not sure how SSL socket closure can be detected. */
     case SSL_ERROR_ZERO_RETURN: return -2;
     default:
@@ -647,7 +647,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
     int closed_clean = 0;
 
     /* Cleanup socket if peer closed the socket. */
-    if ((EPOLLHUP|EPOLLRDHUP) & epoll_event->events) {
+    if (0 != (EPOLLHUP & epoll_event->events)) {
         goto closed;
     }
 
@@ -660,8 +660,8 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         switch (bytes) {
         case -2: goto closed;
         case -1: return -1;
+        case  0: return  0; /* SSL renegotiates, no use to go to send. */
         default:
-            assert(bytes >= 0);
             break;
         }
 
@@ -1191,7 +1191,7 @@ hws_socket_t* hws_socket_create(hws_t* hws, int fd,
     }
 
     /* Add socket to epoll facility. */
-    if (-1 == hws_event_add(hws, &socket->socket, EPOLLIN|EPOLLRDHUP)) {
+    if (-1 == hws_event_add(hws, &socket->socket, EPOLLIN)) {
         goto error;
     }
 
