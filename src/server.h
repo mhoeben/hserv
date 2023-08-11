@@ -33,6 +33,7 @@
 #define SERVER_FLAG_EXIT                    0x02
 #define SERVER_FLAG_VERBOSE                 0x04
 
+#define SERVER_DEFAULT_SOCKOPTS             HSERV_SOCKOPT_REUSEPORT
 #define SERVER_DEFAULT_FLAGS                0x00
 #define SERVER_DEFAULT_PORT                 8080
 #define SERVER_DEFAULT_INDEX_FILE           "index.html"
@@ -47,6 +48,8 @@ typedef struct server_s
     char const* exec;
 
     int flags;
+
+    int sockopts;
 
     char const* bind;
     int port;

@@ -49,7 +49,7 @@ extern "C"
 #define HSERV_SOCKOPT_REUSEPORT             0x02
 
 #ifndef HSERV_CONFIG_SOCKOPTS
-#define HSERV_CONFIG_SOCKOPTS               HSERV_SOCKOPT_REUSEPORT
+#define HSERV_CONFIG_SOCKOPTS               0x00
 #endif
 
 #ifndef HSERV_CONFIG_BINDING_FAMILY

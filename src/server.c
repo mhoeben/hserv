@@ -581,6 +581,7 @@ void server_create(server_t* server)
 
     memset(server, 0, sizeof(*server));
     server->flags = SERVER_DEFAULT_FLAGS;
+    server->sockopts = SERVER_DEFAULT_SOCKOPTS;
     server->port = SERVER_DEFAULT_PORT;
     server->index_file = SERVER_DEFAULT_INDEX_FILE;
     harray_init(&server->response_fields, sizeof(char const*));
@@ -609,6 +610,8 @@ int server_start(server_t* server)
 {
     hserv_config_t config;
     hserv_init(&config, request_on_start, request_on_end);
+
+    config.sockopts = server->sockopts;
 
     if (-1 == hserv_init_binding_ipv4(&config, server->port, server->bind)) {
         fprintf(stderr, "%s: Invalid binding ip address '%s'\n",
