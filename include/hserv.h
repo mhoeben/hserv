@@ -45,6 +45,13 @@ extern "C"
 #define HSERV_VISIBILITY extern
 #endif
 
+#define HSERV_SOCKOPT_REUSEADDR             0x01
+#define HSERV_SOCKOPT_REUSEPORT             0x02
+
+#ifndef HSERV_CONFIG_SOCKOPTS
+#define HSERV_CONFIG_SOCKOPTS               HSERV_SOCKOPT_REUSEPORT
+#endif
+
 #ifndef HSERV_CONFIG_BINDING_FAMILY
 #define HSERV_CONFIG_BINDING_FAMILY         AF_INET
 #endif
@@ -53,8 +60,8 @@ extern "C"
 #define HSERV_CONFIG_BINDING_PORT           8080
 #endif
 
-#ifndef HSERV_MAX_BACKLOG
-#define HSERV_MAX_BACKLOG                   8
+#ifndef HSERV_CONFIG_BACKLOG
+#define HSERV_CONFIG_BACKLOG                8
 #endif
 
 #ifndef HSERV_MAX_DATE_LENGTH
@@ -184,7 +191,9 @@ typedef int(*hserv_session_interrupt_callback_t)(
 
 typedef struct hserv_config_s
 {
+    uint32_t                        sockopts;
     struct sockaddr                 binding __attribute__ ((aligned (4)));
+    int                             backlog;
     hserv_accept_callback_t         accept_callback;
     hserv_transaction_start_callback_t  transaction_start_callback;
     hserv_transaction_end_callback_t    transaction_end_callback;
@@ -2166,6 +2175,9 @@ void hserv_init(hserv_config_t* config,
 
     memset(config, 0, sizeof(*config));
 
+    config->sockopts = HSERV_CONFIG_SOCKOPTS;
+    config->backlog = HSERV_CONFIG_BACKLOG;
+
     config->binding.sa_family = HSERV_CONFIG_BINDING_FAMILY;
 #if (HSERV_CONFIG_BINDING_FAMILY == AF_INET)
     struct sockaddr_in* sa = (struct sockaddr_in*)&config->binding;
@@ -2199,6 +2211,7 @@ hserv_t* hserv_create(hserv_config_t const* config)
     assert(NULL != config);
 
     int const flags = 1;
+    socklen_t socklen;
 
     hserv_t* hserv = (hserv_t*)calloc(1, sizeof(hserv_t));
     if (NULL == hserv) {
@@ -2257,12 +2270,20 @@ hserv_t* hserv_create(hserv_config_t const* config)
         goto error;
     }
 
-    /* Bind to configured address. */
-    if (-1 == setsockopt(hserv->server.fd, SOL_SOCKET, SO_REUSEPORT,
-        &flags, sizeof(flags))) {
+    /* Set socket REUSEADDR option. */
+    if (0 != (HSERV_SOCKOPT_REUSEADDR & config->sockopts)
+     && -1 == setsockopt(hserv->server.fd, SOL_SOCKET, SO_REUSEADDR,
+            &flags, sizeof(flags))) {
         goto error;
     }
-    socklen_t socklen;
+
+    /* Set socket REUSEPORT option. */
+    if (0 != (HSERV_SOCKOPT_REUSEPORT & config->sockopts)
+     && -1 == setsockopt(hserv->server.fd, SOL_SOCKET, SO_REUSEPORT,
+            &flags, sizeof(flags))) {
+        goto error;
+    }
+
     switch (hserv->config.binding.sa_family) {
     case AF_INET: socklen = sizeof(struct sockaddr_in); break;
     case AF_INET6: socklen = sizeof(struct sockaddr_in6); break;
@@ -2274,7 +2295,7 @@ hserv_t* hserv_create(hserv_config_t const* config)
     }
 
     /* Listen...*/
-    if (-1 == listen(hserv->server.fd, HSERV_MAX_BACKLOG)) {
+    if (-1 == listen(hserv->server.fd, config->backlog)) {
         goto error;
     }
 
