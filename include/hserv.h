@@ -52,6 +52,14 @@ extern "C"
 #define HSERV_CONFIG_SOCKOPTS               0x00
 #endif
 
+#ifndef HSERV_CONFIG_SERVER_CLOEXEC
+#define HSERV_CONFIG_SERVER_CLOEXEC         1
+#endif
+
+#ifndef HSERV_CONFIG_SESSION_CLOEXEC
+#define HSERV_CONFIG_SESSION_CLOEXEC        1
+#endif
+
 #ifndef HSERV_CONFIG_BINDING_FAMILY
 #define HSERV_CONFIG_BINDING_FAMILY         AF_INET
 #endif
@@ -2079,6 +2087,14 @@ static int hserv_session_accept(hserv_t* hserv, struct epoll_event* event)
         return -1;
     }
 
+#if (0 != HSERV_CONFIG_SESSION_CLOEXEC)
+    // Set the close-on-exec flag for the session socket.
+    if (-1 == fcntl(fd, F_SETFD, FD_CLOEXEC)) {
+        close(fd);
+        return -1;
+    }
+#endif
+
     hserv_session_t* session =
         hserv_session_create(hserv, fd, &sockaddr, socklen);
     if (NULL == session) {
@@ -2264,6 +2280,13 @@ hserv_t* hserv_create(hserv_config_t const* config)
     if (-1 == hserv->server.fd) {
         goto error;
     }
+
+#if (0 != HSERV_CONFIG_SERVER_CLOEXEC)
+    // Set the close-on-exec flag for the server socket.
+    if (-1 == fcntl(hserv->server.fd, F_SETFD, FD_CLOEXEC)) {
+        goto error;
+    }
+#endif
 
     /* Make socket non-blocking. */
     if (-1 == hserv_socket_set_nonblock(hserv->server.fd)) {
