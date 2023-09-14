@@ -1105,8 +1105,15 @@ void hws_destroy(hws_t* hws)
     /* Destroy all active sockets. */
     hws_list_iterator_t* it = hws_list_begin(&hws->sockets);
     while (hws_list_end(&hws->sockets) != it) {
-        hws_socket_destroy(hws, (hws_socket_t*)it);
+        /* Get pointer to socket. */
+        hws_socket_t* socket = (hws_socket_t*)it;
+
+        /* Get next iterator before the socket (which contains the link) */
+        /* is destroyed. */
         it = it->next;
+
+        /* Destroy socket. */
+        hws_socket_destroy(hws, socket);
     }
 
     close(hws->timer.fd);
