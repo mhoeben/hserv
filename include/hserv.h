@@ -2957,8 +2957,8 @@ int hserv_session_upgraded(hserv_t* hserv, hserv_session_t* session)
 
     /* File-descriptor and ssl are now the user's responsibility. */
     session->socket.fd = -1;
-#ifdef HSER_HAVE_OPENSSL
-    session->socket.ssl = nullptr;
+#ifdef HSERV_HAVE_OPENSSL
+    session->ssl = NULL;
 #endif
     session->close = 1;
     session->callback_request_end = 0;
