@@ -85,6 +85,7 @@ int utility_init()
 
     if (
         hhash_map_insert(&ext_table, "txt",  3, "text/plain") < 0
+     || hhash_map_insert(&ext_table, "css",  3, "test/css") < 0
      || hhash_map_insert(&ext_table, "htm",  3, "text/html") < 0
      || hhash_map_insert(&ext_table, "html", 4, "text/html") < 0
      || hhash_map_insert(&ext_table, "js",   2, "text/javascript") < 0
