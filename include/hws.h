@@ -38,6 +38,7 @@ extern "C"
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/socket.h>
 
 #ifdef HWS_HAVE_OPENSSL
 #include <openssl/ssl.h>
@@ -314,6 +315,12 @@ HWS_VISIBILITY char* hws_generate_sec_websocket_accept(
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
+
+#ifdef HWS_VISIBILITY_STATIC
+#define HWS_VISIBILITY_IMPL static
+#else
+#define HWS_VISIBILITY_IMPL
+#endif
 
 /*
  * Implementation
@@ -1032,14 +1039,14 @@ static uint8_t hws_base64_decode_char(char c)
     return '+' == c ? 62 : 63;
 }
 
-uint8_t* hws_base64_decode2(uint8_t *dst, uint8_t const* src)
+static uint8_t* hws_base64_decode2(uint8_t *dst, uint8_t const* src)
 {
     *dst  = (hws_base64_decode_char(src[0])       ) << 2;
     *dst |= (hws_base64_decode_char(src[1]) & 0x30) >> 4;
     return ++dst;
 }
 
-uint8_t* hws_base64_decode3(uint8_t *dst, uint8_t const* src)
+static uint8_t* hws_base64_decode3(uint8_t *dst, uint8_t const* src)
 {
     dst = hws_base64_decode2(dst, src);
 
@@ -1048,7 +1055,7 @@ uint8_t* hws_base64_decode3(uint8_t *dst, uint8_t const* src)
     return ++dst;
 }
 
-uint8_t* hws_base64_decode4(uint8_t *dst, uint8_t const* src)
+static uint8_t* hws_base64_decode4(uint8_t *dst, uint8_t const* src)
 {
     dst = hws_base64_decode3(dst, src);
 
@@ -1060,7 +1067,7 @@ uint8_t* hws_base64_decode4(uint8_t *dst, uint8_t const* src)
 /*
  * Public
  */
-hws_t* hws_create(void* user_data)
+HWS_VISIBILITY_IMPL hws_t* hws_create(void* user_data)
 {
     hws_t* hws = (hws_t*)calloc(1, sizeof(hws_t));
     if (NULL == hws) {
@@ -1096,7 +1103,7 @@ error:
     return NULL;
 }
 
-void hws_destroy(hws_t* hws)
+HWS_VISIBILITY_IMPL void hws_destroy(hws_t* hws)
 {
     if (NULL == hws) {
         return;
@@ -1121,25 +1128,25 @@ void hws_destroy(hws_t* hws)
     free(hws);
 }
 
-int hws_get_fd(hws_t* hws)
+HWS_VISIBILITY_IMPL int hws_get_fd(hws_t* hws)
 {
     return NULL != hws ? hws->epoll_fd : -1;
 }
 
-void* hws_get_user_data(hws_t* hws)
+HWS_VISIBILITY_IMPL void* hws_get_user_data(hws_t* hws)
 {
     assert(NULL != hws);
     return hws->user_data;
 }
 
-int hws_start(hws_t* hws)
+HWS_VISIBILITY_IMPL int hws_start(hws_t* hws)
 {
     assert(NULL != hws);
     hws->stop = 0;
     return hws_run(hws, -1);
 }
 
-int hws_stop(hws_t* hws)
+HWS_VISIBILITY_IMPL int hws_stop(hws_t* hws)
 {
     assert(NULL != hws);
     hws->stop = 1;
@@ -1148,17 +1155,17 @@ int hws_stop(hws_t* hws)
     return hws_timer_set(&hws->timer, 0, 1, 1, 0);
 }
 
-int hws_poll(hws_t* hws)
+HWS_VISIBILITY_IMPL int hws_poll(hws_t* hws)
 {
     assert(NULL != hws);
     return hws_run(hws, 0);
 }
 
 #ifdef HWS_HAVE_OPENSSL
-hws_socket_t* hws_socket_create(hws_t* hws, int fd, SSL* ssl,
-    hws_socket_callbacks_t const* callbacks)
+HWS_VISIBILITY_IMPL hws_socket_t* hws_socket_create(hws_t* hws, int fd,
+    SSL* ssl, hws_socket_callbacks_t const* callbacks)
 #else
-hws_socket_t* hws_socket_create(hws_t* hws, int fd,
+HWS_VISIBILITY_IMPL hws_socket_t* hws_socket_create(hws_t* hws, int fd,
     hws_socket_callbacks_t const* callbacks)
 #endif
 {
@@ -1211,7 +1218,7 @@ error:
     return NULL;
 }
 
-void hws_socket_destroy(hws_t* hws, hws_socket_t* socket)
+HWS_VISIBILITY_IMPL void hws_socket_destroy(hws_t* hws, hws_socket_t* socket)
 {
     if (NULL == socket) {
         return;
@@ -1225,7 +1232,8 @@ void hws_socket_destroy(hws_t* hws, hws_socket_t* socket)
     free(socket);
 }
 
-void hws_socket_set_user_data(hws_socket_t* socket, void* user_data)
+HWS_VISIBILITY_IMPL void hws_socket_set_user_data(hws_socket_t* socket,
+    void* user_data)
 {
     assert(NULL != socket);
 #if HWS_SOCKET_USER_STORAGE > 0
@@ -1237,47 +1245,48 @@ void hws_socket_set_user_data(hws_socket_t* socket, void* user_data)
     socket->user_data = user_data;
 }
 
-void* hws_socket_get_user_data(hws_socket_t* socket)
+HWS_VISIBILITY_IMPL void* hws_socket_get_user_data(hws_socket_t* socket)
 {
     assert(NULL != socket);
     return socket->user_data;
 }
 
-hws_state_t hws_socket_get_state(hws_socket_t* socket)
+HWS_VISIBILITY_IMPL hws_state_t hws_socket_get_state(hws_socket_t* socket)
 {
     assert(NULL != socket);
     return socket->state;
 }
 
-int hws_socket_get_peer(
+HWS_VISIBILITY_IMPL int hws_socket_get_peer(
     hws_socket_t* socket, struct sockaddr *peer_address, socklen_t* length)
 {
     return getpeername(socket->socket.fd,
         (struct sockaddr*)peer_address, length);
 }
 
-int hws_socket_set_nodelay(hws_socket_t* socket, int enable)
+HWS_VISIBILITY_IMPL int hws_socket_set_nodelay(hws_socket_t* socket, int enable)
 {
     assert(NULL != socket);
-    return setsockopt(socket->socket.fd, IPPROTO_TCP, TCP_NODELAY, (char *)&enable, sizeof(enable));
+    return setsockopt(socket->socket.fd,
+        IPPROTO_TCP, TCP_NODELAY, (char *)&enable, sizeof(enable));
 }
 
-int hws_socket_interrupt(hws_socket_t* socket)
+HWS_VISIBILITY_IMPL int hws_socket_interrupt(hws_socket_t* socket)
 {
     return hws_timer_set(&socket->interrupt, 0, 1, 0, 0);
 }
 
-void hws_socket_receive_disable(hws_socket_t* socket)
+HWS_VISIBILITY_IMPL void hws_socket_receive_disable(hws_socket_t* socket)
 {
     socket->receive_disable = 1;
 }
 
-void hws_socket_receive_enable(hws_socket_t* socket)
+HWS_VISIBILITY_IMPL void hws_socket_receive_enable(hws_socket_t* socket)
 {
     socket->receive_disable = 0;
 }
 
-int hws_socket_receive(hws_t* hws, hws_socket_t* socket,
+HWS_VISIBILITY_IMPL int hws_socket_receive(hws_t* hws, hws_socket_t* socket,
     void* buffer, size_t capacity)
 {
     assert(NULL != hws);
@@ -1296,8 +1305,8 @@ int hws_socket_receive(hws_t* hws, hws_socket_t* socket,
     return hws_event_modify(hws, socket);
 }
 
-int hws_socket_send(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode,
-    void const* buffer, size_t size, int final)
+HWS_VISIBILITY_IMPL int hws_socket_send(hws_t* hws, hws_socket_t* socket,
+    hws_opcode_t opcode, void const* buffer, size_t size, int final)
 {
     assert(NULL != hws);
     assert(NULL != socket);
@@ -1350,8 +1359,8 @@ int hws_socket_send(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode,
     return hws_event_modify(hws, socket);
 }
 
-int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode,
-    void* buffer, size_t size, int final)
+HWS_VISIBILITY_IMPL int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket,
+    hws_opcode_t opcode, void* buffer, size_t size, int final)
 {
     assert(NULL != hws);
     assert(NULL != socket);
@@ -1414,7 +1423,8 @@ int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket, hws_opcode_t opcode
     return hws_event_modify(hws, socket);
 }
 
-void hws_sha1(uint8_t *digest, void const *data, size_t size)
+HWS_VISIBILITY_IMPL void hws_sha1(uint8_t *digest,
+    void const *data, size_t size)
 {
     assert(NULL != digest);
     assert(NULL != data);
@@ -1527,13 +1537,14 @@ void hws_sha1(uint8_t *digest, void const *data, size_t size)
     }
 }
 
-size_t hws_base64_encode_get_length(size_t size)
+HWS_VISIBILITY_IMPL size_t hws_base64_encode_get_length(size_t size)
 {
     return ((size + 2) / 3) << 2;
 }
 
 
-size_t hws_base64_encode(char* base64, void const *data, size_t size)
+HWS_VISIBILITY_IMPL size_t hws_base64_encode(char* base64,
+    void const *data, size_t size)
 {
     uint8_t const* src = (uint8_t const*)data;
     uint8_t* dst = (uint8_t*)base64;
@@ -1579,12 +1590,13 @@ size_t hws_base64_encode(char* base64, void const *data, size_t size)
     return ((char*)dst) - base64;
 }
 
-size_t hws_base64_decode_get_size(size_t length)
+HWS_VISIBILITY_IMPL size_t hws_base64_decode_get_size(size_t length)
 {
     return (3 * (length >> 2)) + 2;
 }
 
-ssize_t hws_base64_decode(void* data, char const* base64, size_t length)
+HWS_VISIBILITY_IMPL ssize_t hws_base64_decode(void* data,
+    char const* base64, size_t length)
 {
     uint8_t const* src = (uint8_t const*)base64;
     uint8_t* dst = (uint8_t*)data;
@@ -1627,7 +1639,7 @@ ssize_t hws_base64_decode(void* data, char const* base64, size_t length)
     return dst - (uint8_t*)data;
 }
 
-char* hws_generate_sec_websocket_key()
+HWS_VISIBILITY_IMPL char* hws_generate_sec_websocket_key()
 {
     uint8_t data[16];
     char* base64;
@@ -1654,7 +1666,8 @@ char* hws_generate_sec_websocket_key()
     return base64;
 }
 
-char* hws_generate_sec_websocket_accept(char const* key, size_t length)
+HWS_VISIBILITY_IMPL char* hws_generate_sec_websocket_accept(
+    char const* key, size_t length)
 {
     static char const* uuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     char* base64;

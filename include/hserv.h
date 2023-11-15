@@ -638,6 +638,12 @@ HSERV_VISIBILITY int hserv_session_upgraded(
 #include <time.h>
 #include <unistd.h>
 
+#ifdef HSERV_VISIBILITY_STATIC
+#define HSERV_VISIBILITY_IMPL static
+#else
+#define HSERV_VISIBILITY_IMPL
+#endif
+
 /*
  * Implementation
  */
@@ -2181,7 +2187,7 @@ static int hserv_run(hserv_t* hserv, int timeout)
 /*
  * Public
  */
-void hserv_init(hserv_config_t* config,
+HSERV_VISIBILITY_IMPL void hserv_init(hserv_config_t* config,
     hserv_transaction_start_callback_t transaction_start_callback,
     hserv_transaction_end_callback_t transaction_end_callback)
 {
@@ -2208,7 +2214,7 @@ void hserv_init(hserv_config_t* config,
     config->transaction_end_callback = transaction_end_callback;
 }
 
-int hserv_init_binding_ipv4(hserv_config_t* config,
+HSERV_VISIBILITY_IMPL int hserv_init_binding_ipv4(hserv_config_t* config,
     uint16_t port, char const* address)
 {
     struct sockaddr_in* sa = (struct sockaddr_in*)&config->binding;
@@ -2222,7 +2228,7 @@ int hserv_init_binding_ipv4(hserv_config_t* config,
     return 0;
 }
 
-hserv_t* hserv_create(hserv_config_t const* config)
+HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
 {
     assert(NULL != config);
 
@@ -2345,7 +2351,7 @@ error:
     return NULL;
 }
 
-void hserv_destroy(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL void hserv_destroy(hserv_t* hserv)
 {
     if (NULL == hserv) {
         return;
@@ -2378,20 +2384,21 @@ void hserv_destroy(hserv_t* hserv)
     free(hserv);
 }
 
-int hserv_get_fd(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL int hserv_get_fd(hserv_t* hserv)
 {
     return NULL != hserv ? hserv->epoll_fd : -1;
 }
 
 #ifdef HSERV_HAVE_OPENSSL
-SSL_CTX* hserv_get_ssl_context(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL SSL_CTX* hserv_get_ssl_context(hserv_t* hserv)
 {
     assert(NULL != hserv);
     return hserv->ssl_context;
 }
 #endif
 
-int hserv_event_add(hserv_t* hserv, hserv_event_t* event, uint32_t events)
+HSERV_VISIBILITY_IMPL int hserv_event_add(hserv_t* hserv,
+    hserv_event_t* event, uint32_t events)
 {
     struct epoll_event epoll_event;
     epoll_event.events = events;
@@ -2399,7 +2406,8 @@ int hserv_event_add(hserv_t* hserv, hserv_event_t* event, uint32_t events)
     return epoll_ctl(hserv->epoll_fd, EPOLL_CTL_ADD, event->fd, &epoll_event);
 }
 
-int hserv_event_modify(hserv_t* hserv, hserv_event_t* event, uint32_t events)
+HSERV_VISIBILITY_IMPL int hserv_event_modify(hserv_t* hserv,
+    hserv_event_t* event, uint32_t events)
 {
     struct epoll_event epoll_event;
     epoll_event.events = events;
@@ -2407,7 +2415,8 @@ int hserv_event_modify(hserv_t* hserv, hserv_event_t* event, uint32_t events)
     return epoll_ctl(hserv->epoll_fd, EPOLL_CTL_MOD, event->fd, &epoll_event);
 }
 
-void hserv_event_remove(hserv_t* hserv, hserv_event_t const* event)
+HSERV_VISIBILITY_IMPL void hserv_event_remove(hserv_t* hserv,
+    hserv_event_t const* event)
 {
     if (-1 == event->fd) {
         return;
@@ -2416,20 +2425,20 @@ void hserv_event_remove(hserv_t* hserv, hserv_event_t const* event)
     (void)epoll_ctl(hserv->epoll_fd, EPOLL_CTL_DEL, event->fd, NULL);
 }
 
-void* hserv_get_user_data(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL void* hserv_get_user_data(hserv_t* hserv)
 {
     assert(NULL != hserv);
     return hserv->config.user_data;
 }
 
-int hserv_start(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL int hserv_start(hserv_t* hserv)
 {
     assert(NULL != hserv);
     hserv->stop = 0;
     return hserv_run(hserv, -1);
 }
 
-int hserv_stop(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL int hserv_stop(hserv_t* hserv)
 {
     assert(NULL != hserv);
     hserv->stop = 1;
@@ -2438,19 +2447,20 @@ int hserv_stop(hserv_t* hserv)
     return hserv_timer_set(&hserv->timer, 0, 1, 1, 0);
 }
 
-int hserv_poll(hserv_t* hserv)
+HSERV_VISIBILITY_IMPL int hserv_poll(hserv_t* hserv)
 {
     assert(NULL != hserv);
     return hserv_run(hserv, 0);
 }
 
-char const* hserv_get_reason_string(hserv_status_code_t status_code)
+HSERV_VISIBILITY_IMPL char const* hserv_get_reason_string(
+    hserv_status_code_t status_code)
 {
     assert(((int)status_code) >= 100 && ((int)status_code) < 599);
     return hserv_reasons[status_code - 100];
 }
 
-int hserv_header_fields_parse(char* fields, size_t length)
+HSERV_VISIBILITY_IMPL int hserv_header_fields_parse(char* fields, size_t length)
 {
     int count = 0;
 
@@ -2532,7 +2542,7 @@ int hserv_header_fields_parse(char* fields, size_t length)
     return count;
 }
 
-char const* hserv_header_fields_iterate(
+HSERV_VISIBILITY_IMPL char const* hserv_header_fields_iterate(
     char const* it, char const** name, char const** value)
 {
     assert(NULL != name);
@@ -2559,7 +2569,7 @@ char const* hserv_header_fields_iterate(
     return it;
 }
 
-char const* hserv_header_field_find(
+HSERV_VISIBILITY_IMPL char const* hserv_header_field_find(
     char const* it, char const *name, char const** value)
 {
     assert(NULL != name);
@@ -2580,7 +2590,7 @@ char const* hserv_header_field_find(
     while (1);
 }
 
-int hserv_header_field_value_contains(
+HSERV_VISIBILITY_IMPL int hserv_header_field_value_contains(
     char const* field_value, char const *value, char const* delim)
 {
     if (NULL != delim) {
@@ -2619,7 +2629,7 @@ int hserv_header_field_value_contains(
     return 0;
 }
 
-int hserv_header_field_contains(
+HSERV_VISIBILITY_IMPL int hserv_header_field_contains(
     const char* it, char const* name, char const* value, char const* delim)
 {
     assert(NULL != it);
@@ -2646,7 +2656,8 @@ int hserv_header_field_contains(
     while (1);
 }
 
-ssize_t hserv_header_fields_copy(char const* it, char* buffer, size_t size)
+HSERV_VISIBILITY_IMPL ssize_t hserv_header_fields_copy(
+    char const* it, char* buffer, size_t size)
 {
     assert(NULL != buffer);
     assert(0 != size);
@@ -2684,32 +2695,37 @@ ssize_t hserv_header_fields_copy(char const* it, char* buffer, size_t size)
     } while(1);
 }
 
-char const* hserv_request_get_method(hserv_session_t const* session)
+HSERV_VISIBILITY_IMPL char const* hserv_request_get_method(
+    hserv_session_t const* session)
 {
     return session->request_method;
 }
 
-char const* hserv_request_get_target(hserv_session_t const* session)
+HSERV_VISIBILITY_IMPL char const* hserv_request_get_target(
+    hserv_session_t const* session)
 {
     return session->request_target;
 }
 
-char const* hserv_request_get_version(hserv_session_t const* session)
+HSERV_VISIBILITY_IMPL char const* hserv_request_get_version(
+    hserv_session_t const* session)
 {
     return session->request_version;
 }
 
-char const* hserv_request_get_header_fields(hserv_session_t const* session)
+HSERV_VISIBILITY_IMPL char const* hserv_request_get_header_fields(
+    hserv_session_t const* session)
 {
     return session->request_fields;
 }
 
-size_t hserv_request_get_content_length(hserv_session_t const* session)
+HSERV_VISIBILITY_IMPL size_t hserv_request_get_content_length(
+    hserv_session_t const* session)
 {
     return session->content_length;
 }
 
-int hserv_request_receive(hserv_t* hserv,
+HSERV_VISIBILITY_IMPL int hserv_request_receive(hserv_t* hserv,
     hserv_session_t* session, void* buffer, size_t capacity,
     hserv_request_content_callback_t callback)
 {
@@ -2738,7 +2754,8 @@ int hserv_request_receive(hserv_t* hserv,
     return 0;
 }
 
-int hserv_respond(hserv_t* hserv, hserv_session_t* session,
+HSERV_VISIBILITY_IMPL int hserv_respond(
+    hserv_t* hserv, hserv_session_t* session,
     hserv_status_code_t status_code, char const* reason,
     char const* const fields[], size_t content_length, void const* content)
 {
@@ -2855,7 +2872,7 @@ int hserv_respond(hserv_t* hserv, hserv_session_t* session,
     return hserv_session_event_modify(hserv, session, EPOLLOUT);
 }
 
-int hserv_response_send(hserv_t* hserv,
+HSERV_VISIBILITY_IMPL int hserv_response_send(hserv_t* hserv,
     hserv_session_t* session, void const* buffer, size_t size,
     hserv_response_content_callback_t callback)
 {
@@ -2892,13 +2909,15 @@ int hserv_response_send(hserv_t* hserv,
 }
 
 #ifdef HSERV_HAVE_OPENSSL
-SSL* hserv_session_get_ssl(hserv_session_t const* session)
+HSERV_VISIBILITY_IMPL SSL* hserv_session_get_ssl(
+    hserv_session_t const* session)
 {
     assert(NULL != session);
     return session->ssl;
 }
 
-int hserv_session_set_ssl(hserv_session_t* session, SSL* ssl)
+HSERV_VISIBILITY_IMPL int hserv_session_set_ssl(
+    hserv_session_t* session, SSL* ssl)
 {
     assert(NULL != session);
     assert(NULL != ssl);
@@ -2912,25 +2931,26 @@ int hserv_session_set_ssl(hserv_session_t* session, SSL* ssl)
 }
 #endif
 
-int hserv_session_get_peer(
+HSERV_VISIBILITY_IMPL int hserv_session_get_peer(
     hserv_session_t* session, struct sockaddr *peer_address, socklen_t* length)
 {
     return getpeername(session->socket.fd,
         (struct sockaddr*)peer_address, length);
 }
 
-void hserv_session_set_interrupt_callback(
+HSERV_VISIBILITY_IMPL void hserv_session_set_interrupt_callback(
     hserv_session_t* session, hserv_session_interrupt_callback_t callback)
 {
     session->interrupt_callback = callback;
 }
 
-int hserv_session_interrupt(hserv_session_t* session)
+HSERV_VISIBILITY_IMPL int hserv_session_interrupt(hserv_session_t* session)
 {
     return hserv_timer_set(&session->interrupt, 0, 1, 0, 0);
 }
 
-void hserv_session_set_user_data(hserv_session_t* session, void* user_data)
+HSERV_VISIBILITY_IMPL void hserv_session_set_user_data(
+    hserv_session_t* session, void* user_data)
 {
     assert(NULL != session);
 #if HSERV_SESSION_USER_STORAGE > 0
@@ -2942,13 +2962,15 @@ void hserv_session_set_user_data(hserv_session_t* session, void* user_data)
     session->user_data = user_data;
 }
 
-void* hserv_session_get_user_data(hserv_session_t const* session)
+HSERV_VISIBILITY void* hserv_session_get_user_data(
+    hserv_session_t const* session)
 {
     assert(NULL != session);
     return session->user_data;
 }
 
-int hserv_session_upgraded(hserv_t* hserv, hserv_session_t* session)
+HSERV_VISIBILITY int hserv_session_upgraded(
+    hserv_t* hserv, hserv_session_t* session)
 {
     int fd = session->socket.fd;
 
