@@ -2073,6 +2073,12 @@ static void hserv_session_destroy(hserv_t* hserv, hserv_session_t* session)
 #ifdef HSERV_HAVE_OPENSSL
     SSL_free(session->ssl);
 #endif
+    if (-1 != session->socket.fd) {
+        close(session->socket.fd);
+    }
+    if (-1 != session->interrupt.fd) {
+        close(session->interrupt.fd);
+    }
 
     hserv_event_remove(hserv, &session->interrupt);
     hserv_event_remove(hserv, &session->socket);
