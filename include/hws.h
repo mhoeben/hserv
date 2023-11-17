@@ -602,7 +602,7 @@ static ssize_t hws_send(hws_t* hws, hws_socket_t* socket,
 static int hws_socket_send_update_close_state(
     hws_socket_t* socket, hws_opcode_t opcode)
 {
-    /* Update state when receiving a close frame. */
+    /* Update state when being passed a close frame. */
     if (HWS_OPCODE_CLOSE == opcode) {
         if (socket->state < HWS_STATE_CLOSING) {
             /* User initiated close sequence. */
@@ -1318,6 +1318,12 @@ HWS_VISIBILITY_IMPL int hws_socket_send(hws_t* hws, hws_socket_t* socket,
         return -1;
     }
 
+    /* Force final bit on all control frames. RFC6455 5.4 says that control */
+    /* frames themselves MUST NOT be fragmented. Hence, FIN is always set. */
+    if (opcode >= HWS_OPCODE_CLOSE) {
+        final = 1;
+    }
+
     uint8_t* ptr = socket->send_header;
 
     ptr[0]  = 0 != (0 != final) ? HWS_BIT_FIN : 0x00;
@@ -1370,6 +1376,12 @@ HWS_VISIBILITY_IMPL int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket,
 
     if (-1 == hws_socket_send_update_close_state(socket, opcode)) {
         return -1;
+    }
+
+    /* Force final bit on all control frames. RFC6455 5.4 says that control */
+    /* frames themselves MUST NOT be fragmented. Hence, FIN is always set. */
+    if (opcode >= HWS_OPCODE_CLOSE) {
+        final = 1;
     }
 
     uint8_t* ptr = socket->receive_header;
