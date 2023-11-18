@@ -1226,6 +1226,7 @@ HWS_VISIBILITY_IMPL void hws_socket_destroy(hws_t* hws, hws_socket_t* socket)
 
     hws_list_erase(&socket->element);
     hws_event_remove(hws, &socket->socket);
+    hws_event_remove(hws, &socket->interrupt);
 
 #ifdef HWS_HAVE_OPENSSL
     SSL_free(socket->ssl);
