@@ -2070,6 +2070,10 @@ static void hserv_session_destroy(hserv_t* hserv, hserv_session_t* session)
         hserv->config.transaction_end_callback(hserv, session, 1);
     }
 
+    hserv_list_erase(&session->element);
+    hserv_event_remove(hserv, &session->socket);
+    hserv_event_remove(hserv, &session->interrupt);
+
 #ifdef HSERV_HAVE_OPENSSL
     SSL_free(session->ssl);
 #endif
@@ -2080,9 +2084,6 @@ static void hserv_session_destroy(hserv_t* hserv, hserv_session_t* session)
         close(session->interrupt.fd);
     }
 
-    hserv_event_remove(hserv, &session->interrupt);
-    hserv_event_remove(hserv, &session->socket);
-    hserv_list_erase(&session->element);
     free(session);
 }
 
