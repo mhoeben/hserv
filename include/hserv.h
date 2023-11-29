@@ -72,6 +72,10 @@ extern "C"
 #define HSERV_CONFIG_BACKLOG                8
 #endif
 
+#ifndef HSERV_MAX_ERROR_STRING
+#define HSERV_MAX_ERROR_STRING              80
+#endif
+
 #ifndef HSERV_MAX_DATE_LENGTH
 #define HSERV_MAX_DATE_LENGTH               40
 #endif
@@ -199,18 +203,19 @@ typedef int(*hserv_session_interrupt_callback_t)(
 
 typedef struct hserv_config_s
 {
-    uint32_t                        sockopts;
-    struct sockaddr                 binding __attribute__ ((aligned (4)));
-    int                             backlog;
-    hserv_accept_callback_t         accept_callback;
+    uint32_t                    sockopts;
+    struct sockaddr             binding __attribute__ ((aligned (4)));
+    int                         backlog;
+    hserv_accept_callback_t     accept_callback;
     hserv_transaction_start_callback_t  transaction_start_callback;
     hserv_transaction_end_callback_t    transaction_end_callback;
 #ifdef HSERV_HAVE_OPENSSL
-    int                             secure;
-    char const*                     certificate_file;
-    char const*                     private_key_file;
+    char const*                 certificate_file;
+    char const*                 private_key_file;
 #endif
-    void*                           user_data;
+    void*                       user_data;
+
+    char                        error_string[HSERV_MAX_ERROR_STRING];
 } hserv_config_t;
 
 typedef struct hserv_event_s
@@ -238,7 +243,7 @@ HSERV_VISIBILITY int hserv_init_binding_ipv4(hserv_config_t* config,
  * Creates an hserv instance with given config. Returns a ready to poll hserv
  * instance upon success and NULL upon failure.
  */
-HSERV_VISIBILITY hserv_t* hserv_create(hserv_config_t const* config);
+HSERV_VISIBILITY hserv_t* hserv_create(hserv_config_t* config);
 
 /*
  * Destroys an hserv instance, releasing all its resources. Pending sessions
@@ -260,6 +265,11 @@ HSERV_VISIBILITY int hserv_get_fd(hserv_t* hserv);
  */
 HSERV_VISIBILITY SSL_CTX* hserv_get_ssl_context(hserv_t* hserv);
 #endif
+
+/*
+ * Gets the hserv instance's error string.
+ */
+HSERV_VISIBILITY char const* hserv_get_error_string(hserv_t* hserv);
 
 /*
  * Adds file-descriptor event to hserv's epoll facility.
@@ -587,6 +597,18 @@ HSERV_VISIBILITY void hserv_session_set_interrupt_callback(
 HSERV_VISIBILITY int hserv_session_interrupt(hserv_session_t* session);
 
 /*
+ * Gets the session's error string.
+ */
+HSERV_VISIBILITY char const* hserv_session_get_error_string(
+    hserv_session_t* session);
+
+/*
+ * Sets the session's error string.
+ */
+HSERV_VISIBILITY void hserv_session_set_error_string(
+    hserv_session_t* session, char const* format, ...);
+
+/*
  * Sets the sessions's user data.
  *
  * When hserv is compiled with HSERV_SESSION_USER_STORAGE > 0, the session's
@@ -697,6 +719,8 @@ static inline void hserv_list_push_back(
     hserv_list_insert(hserv_list_end(list), element);
 }
 
+#define HSERV_MAX(a, b) ((a) > (b) ? (a) : (b))
+
 struct hserv_session_s
 {
     hserv_list_element_t element;
@@ -739,6 +763,8 @@ struct hserv_session_s
     size_t buffer_capacity;
     size_t buffer_size;
     char* buffer;
+
+    char error_string[HSERV_MAX(HSERV_MAX_ERROR_STRING, 1)];
 
     void* user_data;
 #if HSERV_SESSION_USER_STORAGE > 0
@@ -784,6 +810,8 @@ struct hserv_s
     char date[HSERV_MAX_DATE_LENGTH];
 
     hserv_list_t sessions;
+
+    char error_string[HSERV_MAX(HSERV_MAX_ERROR_STRING, 1)];
 
     void* user_data;
 };
@@ -846,14 +874,64 @@ static const char* hserv_reasons[] =
     "", "", "", "", "", "", "", "", "", ""
 };
 
+#if (HSERV_MAX_ERROR_STRING > 0)
+
+static char const* hserv_strerror(char* error_string)
+{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wundef"
+
+#if (_POSIX_C_SOURCE >= 200112L) && ! _GNU_SOURCE
+    if (0 != strerror_r(errno, error_string, HSERV_MAX_ERROR_STRING)) {
+#else
+    if (NULL == strerror_r(errno, error_string, HSERV_MAX_ERROR_STRING)) {
+#endif
+        snprintf(error_string, HSERV_MAX_ERROR_STRING, "%d", errno);
+    }
+    return error_string;
+#pragma GCC diagnostic pop
+}
+
+static char const* hserv_set_error_string(char* error_string, char const* string)
+{
+    char errno_string[HSERV_MAX_ERROR_STRING];
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+    /* Concat formatted string with parenthesized errno string. */ 
+    snprintf(error_string, HSERV_MAX_ERROR_STRING,
+        "%s (%s)", string, hserv_strerror(errno_string));
+#pragma GCC diagnostic pop
+
+    return error_string;
+}
+
+#else
+
+static char const* hserv_set_error_string(char* error_string, char const* string)
+{
+    (void)error_string;
+    (void)string;
+    return "";
+}
+
+#endif // (0 != HSERV_MAX_ERROR_STRING)
+
 static int hserv_session_event_modify(
     hserv_t* hserv, hserv_session_t* session, uint32_t events)
 {
     struct epoll_event epoll_event;
     epoll_event.events = events;
     epoll_event.data.ptr = &session->socket;
-    return epoll_ctl(hserv->epoll_fd,
-        EPOLL_CTL_MOD, session->socket.fd, &epoll_event);
+
+    if (-1 == epoll_ctl(hserv->epoll_fd,
+            EPOLL_CTL_MOD, session->socket.fd, &epoll_event)) {
+        hserv_set_error_string(session->error_string,
+            "epoll_ctl(...EPOLLCTL_MOD...) failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 #ifdef HSERV_HAVE_OPENSSL
@@ -866,13 +944,22 @@ static int hserv_session_event_modify_ssl(
     switch (result) {
     case SSL_ERROR_WANT_READ:   epoll_event.events = EPOLLIN|EPOLLRDHUP; break;
     case SSL_ERROR_WANT_WRITE:  epoll_event.events = EPOLLOUT|EPOLLRDHUP; break;
+    case SSL_ERROR_ZERO_RETURN: return -2;
     default:
+        // TODO get SSL's error info.
+        hserv_set_error_string(session->error_string, "An SSL error occurred");
         return -1;
     }
     epoll_event.data.ptr = &session->socket;
 
-    return epoll_ctl(hserv->epoll_fd,
-        EPOLL_CTL_MOD, session->socket.fd, &epoll_event);
+    if (-1 == epoll_ctl(hserv->epoll_fd,
+            EPOLL_CTL_MOD, session->socket.fd, &epoll_event)) {
+        hserv_set_error_string(session->error_string,
+            "epoll_ctl(...EPOLL_CTL_MOD...) failed");
+        return -1;
+    }
+
+    return 0;
 }
 #endif
 
@@ -881,19 +968,28 @@ static void* hserv_event_user_data(struct epoll_event* epoll_event)
     return ((hserv_event_t*)epoll_event->data.ptr)->user_data;
 }
 
-static int hserv_socket_set_nonblock(int fd)
+static int hserv_set_nonblock(int fd, char* error_string)
 {
     int flags;
-    return -1 != (flags = fcntl(fd, F_GETFL, 0))
-        && -1 != fcntl(fd, F_SETFL, flags|O_NONBLOCK) ? 0 : -1;
+    if (-1 == (flags = fcntl(fd, F_GETFL, 0))
+     || -1 == fcntl(fd, F_SETFL, flags|O_NONBLOCK)) {
+        hserv_set_error_string(error_string, "fcntl(...O_NONBLOCK...) failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 static ssize_t hserv_socket_recv(hserv_t* hserv, hserv_session_t* session,
     void* buffer, size_t size, int flags)
 {
+    /* Returns the number of bytes that can be read, which may be 0 in case */
+    /* SSL wants to renegotiate. Errors are returned signalled as -1, while */
+    /* socket closure is signalled as -2. */
+    ssize_t r;
+
 #ifdef HSERV_HAVE_OPENSSL
     if (NULL != session->ssl) {
-        int r;
         size_t bytes;
 
         if (MSG_PEEK == flags) {
@@ -903,8 +999,8 @@ static ssize_t hserv_socket_recv(hserv_t* hserv, hserv_session_t* session,
             r = SSL_read_ex(session->ssl, buffer, size, &bytes);
         }
         if (r <= 0) {
-            r = hserv_session_event_modify_ssl(hserv, session, r);
-            return r >= 0 ? 0 : -1;
+            /* Returns 0 for success, -1 for failure, -2 for closure. */
+            return hserv_session_event_modify_ssl(hserv, session, r);
         }
 
         return bytes;
@@ -912,19 +1008,37 @@ static ssize_t hserv_socket_recv(hserv_t* hserv, hserv_session_t* session,
 #else
     (void)hserv;
 #endif
-    return recv(session->socket.fd, buffer, size, flags);
+    r = recv(session->socket.fd, buffer, size, flags);
+    switch (r) {
+    case -1:
+        hserv_set_error_string(session->error_string, "recv() failed");
+        return -1;  /* An error occurred. */
+    case 0:
+        return -2;  /* Socket closed. (See comment on SSL why -2.) */
+    default:
+        return r;
+    }
 }
 
 static ssize_t hserv_socket_send(hserv_t* hserv, hserv_session_t* session,
     void const* buffer, size_t size)
 {
+    ssize_t r;
+
 #ifdef HSERV_HAVE_OPENSSL
     if (NULL != session->ssl) {
         size_t bytes;
-        int r = SSL_write_ex(session->ssl, buffer, size, &bytes);
+        r = SSL_write_ex(session->ssl, buffer, size, &bytes);
         if (r <= 0) {
             r = hserv_session_event_modify_ssl(hserv, session, r);
-            return r >= 0 ? 0 : -1;
+            if (r < 0) {
+                // TODO get SSL's error info.
+                hserv_session_set_error_string(session,
+                    "SSL_write_ex() failed");
+                return -1;
+            }
+
+            return 0;
         }
 
         return bytes;
@@ -932,14 +1046,22 @@ static ssize_t hserv_socket_send(hserv_t* hserv, hserv_session_t* session,
 #else
     (void)hserv;
 #endif
-    return send(session->socket.fd, buffer, size, 0);
+    r = send(session->socket.fd, buffer, size, 0);
+    if (-1 == r) {
+        hserv_set_error_string(session->error_string, "send() failed");
+        return -1;
+    }
+
+    return r;
 }
 
-static int hserv_timer_create(hserv_t* hserv, hserv_event_t* event)
+static int hserv_timer_create(
+    hserv_t* hserv, hserv_event_t* event, char *error_string)
 {
     /* Create timer. */
     event->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     if (-1 == event->fd) {
+        hserv_set_error_string(error_string, "timerfd_create() failed");
         goto error;
     }
 
@@ -955,14 +1077,23 @@ error:
 }
 
 static int hserv_timer_set(hserv_event_t const* event,
-    time_t value_sec, long value_nsec, time_t interval_sec, long interval_nsec)
+    time_t value_sec, long value_nsec,
+    time_t interval_sec, long interval_nsec,
+    char* error_string)
 {
     struct itimerspec spec;
+
     spec.it_value.tv_sec = value_sec;
     spec.it_value.tv_nsec = value_nsec;
     spec.it_interval.tv_sec = interval_sec;
     spec.it_interval.tv_nsec = interval_nsec;
-    return timerfd_settime(event->fd, 0, &spec, NULL);
+
+    if (-1 == timerfd_settime(event->fd, 0, &spec, NULL)) {
+        hserv_set_error_string(error_string, "timerfd_settime failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 static int64_t hserv_timer_read(hserv_event_t const* event)
@@ -1054,6 +1185,8 @@ static int hserv_header_field_append(hserv_session_t* session,
     length = sprintf(session->header_buffer + session->header_length,
         "%s: %s\r\n", name, value);
     if (length < 0) {
+        hserv_session_set_error_string(session,
+            "Failed to append header field");
         return -1;
     }
 
@@ -1081,6 +1214,8 @@ static int hserv_header_fields_terminate(hserv_session_t* session)
     /* Check \r\n fits in the remaining space in the session's */
     /* headers buffer. */
     if (session->header_length + 2 > sizeof(session->header_buffer)) {
+        hserv_session_set_error_string(session,
+            "Failed to terminate header fields");
         return -1;
     }
 
@@ -1211,7 +1346,7 @@ static int hserv_request_receive_headers(hserv_t* hserv,
     /* Peek at header bytes. */
     ssize_t bytes = hserv_socket_recv(hserv, session,
         session->header_buffer + session->header_length, remaining, MSG_PEEK);
-    if (-1 == bytes) {
+    if (bytes < 0) {
         hserv_session_destroy(hserv, session);
         return -1;
     }
@@ -1254,7 +1389,7 @@ static int hserv_request_receive_headers(hserv_t* hserv,
     bytes = hserv_socket_recv(hserv, session,
         session->header_buffer + session->header_length, remaining, 0);
     if (bytes < remaining) {
-        if (-1 == bytes) {
+        if (bytes < 0) {
             hserv_session_destroy(hserv, session);
             return -1;
         }
@@ -1290,7 +1425,7 @@ static int hserv_request_receive_content(hserv_t* hserv,
     /* Receive content. */
     bytes = hserv_socket_recv(hserv, session,
         session->buffer + session->buffer_size, bytes, 0);
-    if (bytes <= 0) {
+    if (bytes < 0) {
         hserv_session_destroy(hserv, session);
         return -1;
     }
@@ -1726,7 +1861,7 @@ static int hserv_request_on_chunked_trailer(hserv_t* hserv,
         /* Receive \r\n or start of trailer. */
         bytes = hserv_socket_recv(hserv, session,
             session->header_buffer, bytes, 0);
-        if (bytes <= 0) {
+        if (bytes < 0) {
             hserv_session_destroy(hserv, session);
             return -1;
         }
@@ -2018,12 +2153,13 @@ static hserv_session_t* hserv_session_create(hserv_t* hserv,
 #endif
 
     /* Create interrupt timer. */
-    if (-1 == hserv_timer_create(hserv, &session->interrupt)) {
+    if (-1 == hserv_timer_create(
+            hserv, &session->interrupt, hserv->error_string)) {
         goto error;
     }
 
     /* Make socket non blocking. */
-    if (-1 == hserv_socket_set_nonblock(session->socket.fd)) {
+    if (-1 == hserv_set_nonblock(session->socket.fd, hserv->error_string)) {
         goto error;
     }
 
@@ -2097,12 +2233,15 @@ static int hserv_session_accept(hserv_t* hserv, struct epoll_event* event)
 
     int fd = accept(hserv->server.fd, &sockaddr, &socklen);
     if (-1 == fd) {
+        hserv_set_error_string(hserv->error_string, "accept() failed");
         return -1;
     }
 
 #if (0 != HSERV_CONFIG_SESSION_CLOEXEC)
     // Set the close-on-exec flag for the session socket.
     if (-1 == fcntl(fd, F_SETFD, FD_CLOEXEC)) {
+        hserv_set_error_string(hserv->error_string,
+            "fcntl(...FD_CLOEXEC...) failed");
         close(fd);
         return -1;
     }
@@ -2124,15 +2263,15 @@ static int hserv_session_accept(hserv_t* hserv, struct epoll_event* event)
     return 0;
 }
 
-static int hserv_update_date(hserv_t* hserv)
+static void hserv_update_date(hserv_t* hserv)
 {
     time_t rawtime;
     struct tm * timeinfo;
 
     time(&rawtime);
     timeinfo = gmtime(&rawtime);
-    return strftime(hserv->date, sizeof(hserv->date),
-        "%a, %d %b %Y %T GMT", timeinfo);
+
+    strftime(hserv->date, sizeof(hserv->date), "%a, %d %b %Y %T GMT", timeinfo);
 }
 
 static int hserv_on_timer(hserv_t* hserv, struct epoll_event* event)
@@ -2157,7 +2296,8 @@ static int hserv_on_timer(hserv_t* hserv, struct epoll_event* event)
     }
 
     /* Update current time. */
-    return hserv_update_date(hserv);
+    hserv_update_date(hserv);
+    return 0;
 }
 
 static int hserv_run(hserv_t* hserv, int timeout)
@@ -2169,6 +2309,8 @@ static int hserv_run(hserv_t* hserv, int timeout)
         int r = epoll_wait(hserv->epoll_fd, &event, 1, timeout);
         if (r <= 0) {
             if (-1 == r) {
+                hserv_set_error_string(hserv->error_string,
+                    "epoll_wait() failed");
                 return -1;
             }
             break;
@@ -2228,6 +2370,7 @@ HSERV_VISIBILITY_IMPL int hserv_init_binding_ipv4(hserv_config_t* config,
     sa->sin_port = htons(port);
     if (NULL != address) {
         if (inet_pton(AF_INET, address, &sa->sin_addr) <= 0) {
+            hserv_set_error_string(config->error_string, "inet_pton() failed");
             return -1;
         }
     }
@@ -2235,7 +2378,7 @@ HSERV_VISIBILITY_IMPL int hserv_init_binding_ipv4(hserv_config_t* config,
     return 0;
 }
 
-HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
+HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t* config)
 {
     assert(NULL != config);
 
@@ -2244,6 +2387,8 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
 
     hserv_t* hserv = (hserv_t*)calloc(1, sizeof(hserv_t));
     if (NULL == hserv) {
+        snprintf(config->error_string, HSERV_MAX_ERROR_STRING,
+            "calloc() failed");
         goto error;
     }
 
@@ -2264,24 +2409,32 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
     /* Create epoll facility. */
     hserv->epoll_fd = epoll_create1(0);
     if (-1 == hserv->epoll_fd) {
+        hserv_set_error_string(config->error_string, "epoll_create1() failed");
         goto error;
     }
 
 #ifdef HSERV_HAVE_OPENSSL
-    if (0 != hserv->config.secure) {
+    if (NULL != hserv->config.certificate_file
+     && NULL != hserv->config.private_key_file) {
         hserv->ssl_context = SSL_CTX_new(TLS_server_method());
         if (NULL == hserv->ssl_context) {
+            snprintf(config->error_string, HSERV_MAX_ERROR_STRING,
+                "SSL_CTX_new() failed");
             goto error;
         }
 
         if (NULL != hserv->config.certificate_file
          && 1 != SSL_CTX_use_certificate_file(hserv->ssl_context,
                 hserv->config.certificate_file, SSL_FILETYPE_PEM)) {
+            snprintf(config->error_string, HSERV_MAX_ERROR_STRING,
+                "SSL_CTX_use_certificate_file() failed");
             goto error;
         }
         if (NULL != hserv->config.private_key_file
          && 1 != SSL_CTX_use_PrivateKey_file(hserv->ssl_context,
                 hserv->config.private_key_file, SSL_FILETYPE_PEM)) {
+            snprintf(config->error_string, HSERV_MAX_ERROR_STRING,
+                "SSL_CTX_use_PrivateKey_file() failed");
             goto error;
         }
     }
@@ -2291,18 +2444,21 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
     hserv->server.fd = socket(
         hserv->config.binding.sa_family, SOCK_STREAM, 0);
     if (-1 == hserv->server.fd) {
+        hserv_set_error_string(config->error_string, "socket() failed");
         goto error;
     }
 
 #if (0 != HSERV_CONFIG_SERVER_CLOEXEC)
     // Set the close-on-exec flag for the server socket.
     if (-1 == fcntl(hserv->server.fd, F_SETFD, FD_CLOEXEC)) {
+        hserv_set_error_string(config->error_string,
+            "fcntl(...FD_CLOEXEC...) failed");
         goto error;
     }
 #endif
 
     /* Make socket non-blocking. */
-    if (-1 == hserv_socket_set_nonblock(hserv->server.fd)) {
+    if (-1 == hserv_set_nonblock(hserv->server.fd, config->error_string)) {
         goto error;
     }
 
@@ -2310,6 +2466,8 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
     if (0 != (HSERV_SOCKOPT_REUSEADDR & config->sockopts)
      && -1 == setsockopt(hserv->server.fd, SOL_SOCKET, SO_REUSEADDR,
             &flags, sizeof(flags))) {
+        hserv_set_error_string(config->error_string,
+            "setsockopt(...SO_REUSEADDR...) failed");
         goto error;
     }
 
@@ -2317,6 +2475,8 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
     if (0 != (HSERV_SOCKOPT_REUSEPORT & config->sockopts)
      && -1 == setsockopt(hserv->server.fd, SOL_SOCKET, SO_REUSEPORT,
             &flags, sizeof(flags))) {
+        hserv_set_error_string(config->error_string,
+            "setsockopt(...SO_REUSEPORT...) failed");
         goto error;
     }
 
@@ -2324,33 +2484,35 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t const* config)
     case AF_INET: socklen = sizeof(struct sockaddr_in); break;
     case AF_INET6: socklen = sizeof(struct sockaddr_in6); break;
     default:
+        snprintf(config->error_string, HWS_MAX_ERROR_STRING,
+            "Invalid or unsupported address family");
         goto error;
     }
     if (-1 == bind(hserv->server.fd, &hserv->config.binding, socklen)) {
+        hserv_set_error_string(config->error_string, "bind() failed");
         goto error;
     }
 
     /* Listen...*/
     if (-1 == listen(hserv->server.fd, config->backlog)) {
+        hserv_set_error_string(config->error_string, "listen() failed");
         goto error;
     }
 
     /* ...and add to epoll facility. */
     if (-1 == hserv_event_add(hserv, &hserv->server, EPOLLIN)) {
+        hserv_set_error_string(config->error_string, "epoll_ctl() failed");
         goto error;
     }
 
     /* Create a 1 second maintenance timer. */
-    if (-1 == hserv_timer_create(hserv, &hserv->timer)
-     || -1 == hserv_timer_set(&hserv->timer, 1, 0, 1, 0)) {
+    if (-1 == hserv_timer_create(hserv, &hserv->timer, config->error_string)
+     || -1 == hserv_timer_set(&hserv->timer, 1, 0, 1, 0, config->error_string)) {
         goto error;
     }
 
     /* Update date. */
-    if (-1 == hserv_update_date(hserv)) {
-        goto error;
-    }
-
+    hserv_update_date(hserv);
     return hserv;
 
 error:
@@ -2374,18 +2536,18 @@ HSERV_VISIBILITY_IMPL void hserv_destroy(hserv_t* hserv)
     }
 
     /* Close and free server resources. */
+#ifdef HSERV_HAVE_OPENSSL
+    if (NULL != hserv->ssl_context) {
+        SSL_CTX_free(hserv->ssl_context);
+    }
+#endif
     if (hserv->timer.fd >= 0) {
         close(hserv->timer.fd);
     }
     if (hserv->server.fd >= 0) {
         close(hserv->server.fd);
     }
-#ifdef HSERV_HAVE_OPENSSL
-    if (NULL != hserv->ssl_context) {
-        SSL_CTX_free(hserv->ssl_context);
-    }
-#endif
-    if (hserv->epoll_fd >= 0) {
+    if (-1 != hserv->epoll_fd) {
         close(hserv->epoll_fd);
     }
     free(hserv);
@@ -2404,27 +2566,58 @@ HSERV_VISIBILITY_IMPL SSL_CTX* hserv_get_ssl_context(hserv_t* hserv)
 }
 #endif
 
+HSERV_VISIBILITY_IMPL char const* hserv_get_error_string(hserv_t* hserv)
+{
+    assert(NULL != hserv);
+    return hserv->error_string;
+}
+
 HSERV_VISIBILITY_IMPL int hserv_event_add(hserv_t* hserv,
     hserv_event_t* event, uint32_t events)
 {
+    assert(NULL != hserv);
+    assert(NULL != event);
+
     struct epoll_event epoll_event;
     epoll_event.events = events;
     epoll_event.data.ptr = event;
-    return epoll_ctl(hserv->epoll_fd, EPOLL_CTL_ADD, event->fd, &epoll_event);
+
+    if (-1 == epoll_ctl(
+            hserv->epoll_fd, EPOLL_CTL_ADD, event->fd, &epoll_event)) {
+        hserv_set_error_string(hserv->error_string,
+            "epoll_ctl(...EPOLL_CTL_ADD...) failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 HSERV_VISIBILITY_IMPL int hserv_event_modify(hserv_t* hserv,
     hserv_event_t* event, uint32_t events)
 {
+    assert(NULL != hserv);
+    assert(NULL != event);
+
     struct epoll_event epoll_event;
     epoll_event.events = events;
     epoll_event.data.ptr = event;
-    return epoll_ctl(hserv->epoll_fd, EPOLL_CTL_MOD, event->fd, &epoll_event);
+
+    if (-1 == epoll_ctl(
+            hserv->epoll_fd, EPOLL_CTL_MOD, event->fd, &epoll_event)) {
+        hserv_set_error_string(hserv->error_string,
+            "epoll_ctl(...EPOLL_CTL_MOD...) failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 HSERV_VISIBILITY_IMPL void hserv_event_remove(hserv_t* hserv,
     hserv_event_t const* event)
 {
+    assert(NULL != hserv);
+    assert(NULL != event);
+
     if (-1 == event->fd) {
         return;
     }
@@ -2451,7 +2644,7 @@ HSERV_VISIBILITY_IMPL int hserv_stop(hserv_t* hserv)
     hserv->stop = 1;
 
     /* Modify timer to immediately fire and exit epoll_wait. */
-    return hserv_timer_set(&hserv->timer, 0, 1, 1, 0);
+    return hserv_timer_set(&hserv->timer, 0, 1, 1, 0, hserv->error_string);
 }
 
 HSERV_VISIBILITY_IMPL int hserv_poll(hserv_t* hserv)
@@ -2941,6 +3134,7 @@ HSERV_VISIBILITY_IMPL int hserv_session_set_ssl(
 HSERV_VISIBILITY_IMPL int hserv_session_get_peer(
     hserv_session_t* session, struct sockaddr *peer_address, socklen_t* length)
 {
+    assert(NULL != session);
     return getpeername(session->socket.fd,
         (struct sockaddr*)peer_address, length);
 }
@@ -2948,12 +3142,33 @@ HSERV_VISIBILITY_IMPL int hserv_session_get_peer(
 HSERV_VISIBILITY_IMPL void hserv_session_set_interrupt_callback(
     hserv_session_t* session, hserv_session_interrupt_callback_t callback)
 {
+    assert(NULL != session);
     session->interrupt_callback = callback;
 }
 
 HSERV_VISIBILITY_IMPL int hserv_session_interrupt(hserv_session_t* session)
 {
-    return hserv_timer_set(&session->interrupt, 0, 1, 0, 0);
+    assert(NULL != session);
+    return hserv_timer_set(
+        &session->interrupt, 0, 1, 0, 0, session->error_string);
+}
+
+HSERV_VISIBILITY_IMPL char const* hserv_session_get_error_string(
+    hserv_session_t* session)
+{
+    assert(NULL != session);
+    return session->error_string;
+}
+
+HSERV_VISIBILITY_IMPL void hserv_session_set_error_string(
+    hserv_session_t* session, char const *format, ...)
+{
+    assert(NULL != session);
+
+    va_list ap;
+    va_start(ap, format);
+    vsnprintf(session->error_string, HSERV_MAX_ERROR_STRING, format, ap);
+    va_end(ap);
 }
 
 HSERV_VISIBILITY_IMPL void hserv_session_set_user_data(

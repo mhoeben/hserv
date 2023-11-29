@@ -267,11 +267,19 @@ static FILE* open_target(server_t* server, transaction_t* t, char const* mode, s
 static int respond_with_error(hserv_t* hserv, hserv_session_t* session,
     hserv_status_code_t status_code)
 {
+    server_t* server = hserv_get_user_data(hserv);
     char const* headers []= {
         "Connection", "close",
         NULL
     };
-    return hserv_respond(hserv, session, status_code, NULL, headers, 0, NULL);
+    if (-1 == hserv_respond(hserv, session,
+            status_code, NULL, headers, 0, NULL)) {
+        fprintf(stderr, "%s: hserv_respond() failed: %s\n", server->exec,
+            hserv_session_get_error_string(session));
+        return -1;
+    }
+
+    return 0;
 }
 
 int respond_on_content(hserv_t* hserv,
@@ -614,13 +622,11 @@ int server_start(server_t* server)
     config.sockopts = server->sockopts;
 
     if (-1 == hserv_init_binding_ipv4(&config, server->port, server->bind)) {
-        fprintf(stderr, "%s: Invalid binding ip address '%s'\n",
-            server->exec, server->bind);
+        fprintf(stderr, "%s: Failed to init binding to %s\n", server->exec, server->bind);
         return -1;
     }
 
     if (0 != (server->flags & SERVER_FLAG_SECURE)) {
-        config.secure = 1;
         config.certificate_file = server->certificate_file;
         config.private_key_file = server->private_key_file;
     }
@@ -629,15 +635,19 @@ int server_start(server_t* server)
 
     server->hserv = hserv_create(&config);
     if (NULL == server->hserv) {
-        fprintf(stderr, "%s: Failed to create HTTP server\n", server->exec);
+        fprintf(stderr, "%s: Failed to create HTTP server: %s\n",
+            server->exec, config.error_string);
         return -1;
     }
 
     if (NULL != server->websocket_subprotocol) {
-        server->hws = hws_create(server);
+        hws_config_t hws_config;
+        hws_config.user_data = server;
+
+        server->hws = hws_create(&hws_config);
         if (NULL == server->hws) {
-            fprintf(stderr, "%s: Failed to create WebSocket server\n",
-                server->exec);
+            fprintf(stderr, "%s: Failed to create WebSocket server: %s\n",
+                server->exec, hws_config.error_string);
             return -1;
         }
 
@@ -647,8 +657,8 @@ int server_start(server_t* server)
 
         if (-1 == hserv_event_add(server->hserv, &server->hws_event, EPOLLIN)) {
             fprintf(stderr,
-                "%s: Failed to add WebSocket server to HTTP server (%s)\n",
-                server->exec, strerror(errno)
+                "%s: Failed to add WebSocket server to HTTP server: %s\n",
+                server->exec, hserv_get_error_string(server->hserv)
             );
             return -1;
         }

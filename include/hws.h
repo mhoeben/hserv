@@ -45,6 +45,10 @@ extern "C"
 #include <openssl/err.h>
 #endif
 
+#ifndef HWS_MAX_ERROR_STRING
+#define HWS_MAX_ERROR_STRING        80
+#endif
+
 #ifndef HWS_SOCKET_USER_STORAGE
 #define HWS_SOCKET_USER_STORAGE     0
 #endif
@@ -76,8 +80,27 @@ typedef enum hws_opcode_e
     HWS_OPCODE_PONG = 10
 } hws_opcode_t;
 
+typedef struct hws_config_s
+{
+    void* user_data;
+
+    char error_string[HWS_MAX_ERROR_STRING];
+} hws_config_t;
+
 typedef struct hws_s hws_t;
 typedef struct hws_socket_s hws_socket_t;
+
+typedef struct hws_socket_connect_config_s
+{
+    struct sockaddr address __attribute__ ((aligned (4)));
+    char const* target;
+    char const* host;
+    char const* protocols;
+    char const* header_fields;
+
+    int(*response)(hws_t* hws, hws_socket_t* socket,
+        int status_code, char const* fields);
+} hws_socket_connect_config_t;
 
 typedef struct hws_socket_callbacks_s
 {
@@ -92,24 +115,29 @@ typedef struct hws_socket_callbacks_s
 } hws_socket_callbacks_t;
 
 /*
- * Creates an hws instance. Returns a ready to poll hws server instance upon
+ * Creates an hws instance. Returns a ready to poll hws instance upon
  * success and NULL upon failure.
  */
-HWS_VISIBILITY hws_t* hws_create(void* user_data);
+HWS_VISIBILITY hws_t* hws_create(hws_config_t* config);
 
 /*
  * Destroys an hws instance, releasing all its resources. Active websocket
  * connections are closed and destroyed.
  *
- * Note that the server shall not be running. Use hws_stop() to stop a
+ * Note that the instance shall not be running. Use hws_stop() to stop a
  * running instance.
  */
 HWS_VISIBILITY void hws_destroy(hws_t* hws);
 
 /*
- * Gets the server's epoll facilities` file descriptor.
+ * Gets the hws instance's epoll facilities` file descriptor.
  */
 HWS_VISIBILITY int hws_get_fd(hws_t* hws);
+
+/*
+ * Gets the hws instance's error string.
+ */
+HWS_VISIBILITY char const* hws_get_error_string(hws_t* hws);
 
 /*
  * Gets the hws instance's user data.
@@ -146,6 +174,16 @@ HWS_VISIBILITY int hws_stop(hws_t* hws);
  */
 HWS_VISIBILITY int hws_poll(hws_t* hws);
 
+/*
+ * Creates an hws websocket and connects to an HTTP(S) server to upgrade to
+ * a WebSocket client connection.
+ *
+ * Returns an hws socket instance on success and NULL on failure.
+ */
+HWS_VISIBILITY hws_socket_t* hws_socket_connect(hws_t* hws,
+    hws_socket_connect_config_t const* config,
+    hws_socket_callbacks_t const* callbacks);
+    
 /*
  * Creates an hws websocket for given file descriptor and secure socket.
  * Typically, a websocket is negotiated between an HTTP server and HTTP
@@ -261,6 +299,17 @@ HWS_VISIBILITY int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket,
 
 
 /*
+ * Get the socket's error string.
+ */
+HWS_VISIBILITY char const* hws_socket_get_error_string(hws_socket_t* socket);
+
+/*
+ * Set the socket's error string.
+ */
+HWS_VISIBILITY void hws_socket_set_error_string(hws_socket_t* socket,
+    char const* format, ...);
+
+/*
  * This function generates a 160 bitSHA1 hash from the passed data.
  * The digest argument shall point to a buffer of at least 20 bytes.
  */
@@ -308,6 +357,7 @@ HWS_VISIBILITY char* hws_generate_sec_websocket_accept(
 #ifdef HWS_IMPL
 
 #include <assert.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <string.h>
@@ -376,6 +426,8 @@ static inline void hws_list_push_back(
 
 typedef int(*hws_event_callback_t)(hws_t* hws, struct epoll_event* event);
 
+#define HWS_MAX(a, b) ((a) > (b) ? (a) : (b))
+
 typedef struct hws_event_s
 {
     int fd;
@@ -424,6 +476,8 @@ struct hws_socket_s
     size_t send_size;
     size_t send_progress;
 
+    char error_string[HWS_MAX(HWS_MAX_ERROR_STRING, 1)];
+
     void* user_data;
 #if HWS_SOCKET_USER_STORAGE > 0
     char user_storage[HWS_SOCKET_USER_STORAGE];
@@ -436,17 +490,77 @@ struct hws_s
     int epoll_fd;
     hws_event_t timer;
 
+#ifdef HWS_HAVE_OPENSSL
+    SSL_CTX* ssl_context;
+#endif
+
     hws_list_t sockets;
+
+    char error_string[HWS_MAX(HWS_MAX_ERROR_STRING, 1)];
 
     void* user_data;
 };
 
-static int hws_event_add(hws_t* hws, hws_event_t* event, uint32_t events)
+#if (HWS_MAX_ERROR_STRING > 0)
+
+static char const* hws_strerror(char* error_string)
+{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wundef"
+
+#if (_POSIX_C_SOURCE >= 200112L) && ! _GNU_SOURCE
+    if (0 != strerror_r(errno, error_string, HWS_MAX_ERROR_STRING)) {
+#else
+    if (NULL == strerror_r(errno, error_string, HWS_MAX_ERROR_STRING)) {
+#endif
+        snprintf(error_string, HWS_MAX_ERROR_STRING, "%d", errno);
+    }
+    return error_string;
+#pragma GCC diagnostic pop
+}
+
+static char const* hws_set_error_string(char* error_string, char const* string)
+{
+    char errno_string[HWS_MAX_ERROR_STRING];
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+    /* Concat formatted string with parenthesized errno string. */ 
+    snprintf(error_string, HWS_MAX_ERROR_STRING,
+        "%s (%s)", string, hws_strerror(errno_string));
+#pragma GCC diagnostic pop
+
+    return error_string;
+}
+
+#else
+
+static char const* hws_set_error_string(char* error_string, char const* string)
+{
+    (void)error_string;
+    (void)string;
+    return "";
+}
+
+#endif // (0 != HWS_MAX_ERROR_STRING)
+
+static int hws_event_add(
+    hws_t* hws, hws_socket_t* socket, hws_event_t* event, uint32_t events)
 {
     struct epoll_event epoll_event;
     epoll_event.events = events;
     epoll_event.data.ptr = event;
-    return epoll_ctl(hws->epoll_fd, EPOLL_CTL_ADD, event->fd, &epoll_event);
+
+    if (-1 == epoll_ctl(hws->epoll_fd,
+            EPOLL_CTL_ADD, event->fd, &epoll_event)) {
+        hws_set_error_string(
+            NULL != socket ? socket->error_string : hws->error_string,
+            "epoll_ctl(...EPOLL_CTL_ADD...) failed"
+        );
+        return -1;
+    }
+
+    return 0;
 }
 
 static int hws_event_modify(hws_t* hws, hws_socket_t* socket)
@@ -462,8 +576,13 @@ static int hws_event_modify(hws_t* hws, hws_socket_t* socket)
         epoll_event.events |= EPOLLOUT;
     }
 
-    return epoll_ctl(hws->epoll_fd,
-        EPOLL_CTL_MOD, socket->socket.fd, &epoll_event);
+    if (-1 == epoll_ctl(hws->epoll_fd,
+            EPOLL_CTL_MOD, socket->socket.fd, &epoll_event)) {
+        hws_set_error_string(socket->error_string,
+            "epoll_ctl(...EPOLL_CTL_MOD...) failed");
+    }
+
+    return 0;
 }
 
 #ifdef HWS_HAVE_OPENSSL
@@ -479,12 +598,16 @@ static int hws_event_modify_ssl(
     /* Not sure how SSL socket closure can be detected. */
     case SSL_ERROR_ZERO_RETURN: return -2;
     default:
+        // TODO get SSL's error info.
+        hws_socket_set_error_string(socket, "An SSL error occurred");
         return -1;
     }
     epoll_event.data.ptr = &socket->socket;
 
     if (-1 == epoll_ctl(hws->epoll_fd,
-        EPOLL_CTL_MOD, socket->socket.fd, &epoll_event)) {
+            EPOLL_CTL_MOD, socket->socket.fd, &epoll_event)) {
+        hws_set_error_string(socket->error_string,
+            "epoll_ctl(...EPOLL_CTL_MOD...) failed");
         return -1;
     }
 
@@ -507,16 +630,17 @@ static void* hws_event_user_data(struct epoll_event* epoll_event)
     return ((hws_event_t*)epoll_event->data.ptr)->user_data;
 }
 
-static int hws_timer_create(hws_t* hws, hws_event_t* event)
+static int hws_timer_create(hws_t* hws, hws_event_t* event, char* error_string)
 {
     /* Create timer. */
     event->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     if (-1 == event->fd) {
+        hws_set_error_string(error_string, "timerfd_create() failed");
         goto error;
     }
 
     /* Add to epoll facility. */
-    if (-1 == hws_event_add(hws, event, EPOLLIN)) {
+    if (-1 == hws_event_add(hws, NULL, event, EPOLLIN)) {
         goto error;
     }
     return 0;
@@ -526,15 +650,23 @@ error:
     return -1;
 }
 
-static int hws_timer_set(hws_event_t const* event, time_t value_sec, long value_nsec,
-    time_t interval_sec, long interval_nsec)
+static int hws_timer_set(hws_event_t const* event,
+    time_t value_sec, long value_nsec,
+    time_t interval_sec, long interval_nsec,
+    char* error_string)
 {
     struct itimerspec spec;
     spec.it_value.tv_sec = value_sec;
     spec.it_value.tv_nsec = value_nsec;
     spec.it_interval.tv_sec = interval_sec;
     spec.it_interval.tv_nsec = interval_nsec;
-    return timerfd_settime(event->fd, 0, &spec, NULL);
+
+    if (-1 == timerfd_settime(event->fd, 0, &spec, NULL)) {
+        hws_set_error_string(error_string, "timerfd_settime() failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 static int64_t hws_timer_read(hws_event_t const* event)
@@ -559,7 +691,7 @@ static ssize_t hws_recv(hws_t* hws, hws_socket_t* socket,
         r = SSL_read_ex(socket->ssl, buffer, size, &bytes);
         if (r <= 0) {
             /* Returns 0 for success, -1 for failure, -2 for closure. */
-            return  hws_event_modify_ssl(hws, socket, r);
+            return hws_event_modify_ssl(hws, socket, r);
         }
 
         return bytes;
@@ -571,6 +703,7 @@ static ssize_t hws_recv(hws_t* hws, hws_socket_t* socket,
     r = recv(socket->socket.fd, buffer, size, 0);
     switch (r) { 
     case -1:
+        hws_set_error_string(socket->error_string, "recv() failed");
         return -1;  /* An error occurred. */
     case 0:
         return -2;  /* Socket closed. (See comment on SSL why -2.) */
@@ -582,13 +715,21 @@ static ssize_t hws_recv(hws_t* hws, hws_socket_t* socket,
 static ssize_t hws_send(hws_t* hws, hws_socket_t* socket,
     void const* buffer, size_t size)
 {
+    ssize_t r;
+
 #ifdef HWS_HAVE_OPENSSL
     if (NULL != socket->ssl) {
         size_t bytes;
-        int r = SSL_write_ex(socket->ssl, buffer, size, &bytes);
+        r = SSL_write_ex(socket->ssl, buffer, size, &bytes);
         if (r <= 0) {
             r = hws_event_modify_ssl(hws, socket, r);
-            return r >= 0 ? 0 : -1;
+            if (r < 0) {
+                // TODO get SSL's error info.
+                hws_socket_set_error_string(socket, "SSL_write_ex() failed");
+                return -1;
+            }
+
+            return 0;
         }
 
         return bytes;
@@ -596,7 +737,13 @@ static ssize_t hws_send(hws_t* hws, hws_socket_t* socket,
 #else
     (void)hws;
 #endif
-    return send(socket->socket.fd, buffer, size, 0);
+    r = send(socket->socket.fd, buffer, size, 0);
+    if (-1 == r) {
+        hws_set_error_string(socket->error_string, "send() failed");
+        return -1;
+    }
+
+    return r;
 }
 
 static int hws_socket_send_update_close_state(
@@ -621,6 +768,8 @@ static int hws_socket_send_update_close_state(
         else {
             /* Non-compliant close sequence. */
             assert(0);
+
+            hws_socket_set_error_string(socket, "Non-compliant close sequence");
             return -1;
         }
     }
@@ -737,6 +886,9 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
             else {
                 /* Non-compliant close sequence. */
                 assert(0);
+
+                hws_socket_set_error_string(socket,
+                    "Non-compliant close sequence");
                 return -1;
             }
         }
@@ -971,6 +1123,7 @@ static int hws_run(hws_t* hws, int timeout)
         int r = epoll_wait(hws->epoll_fd, &event, 1, timeout);
         if (r <= 0) {
             if (-1 == r) {
+                hws_set_error_string(hws->error_string, "epoll_wait() failed");
                 return -1;
             }
             break;
@@ -1067,10 +1220,11 @@ static uint8_t* hws_base64_decode4(uint8_t *dst, uint8_t const* src)
 /*
  * Public
  */
-HWS_VISIBILITY_IMPL hws_t* hws_create(void* user_data)
+HWS_VISIBILITY_IMPL hws_t* hws_create(hws_config_t* config)
 {
     hws_t* hws = (hws_t*)calloc(1, sizeof(hws_t));
     if (NULL == hws) {
+        snprintf(config->error_string, HWS_MAX_ERROR_STRING, "calloc() failed");
         goto error;
     }
 
@@ -1082,17 +1236,18 @@ HWS_VISIBILITY_IMPL hws_t* hws_create(void* user_data)
 
     hws_list_init(&hws->sockets);
 
-    hws->user_data = user_data;
+    hws->user_data = config->user_data;
 
     /* Create epoll facility. */
     hws->epoll_fd = epoll_create1(0);
     if (-1 == hws->epoll_fd) {
+        hws_set_error_string(config->error_string, "epoll_create1() failed");
         goto error;
     }
 
     /* Create a 1 second maintenance timer. */
-    if (-1 == hws_timer_create(hws, &hws->timer)
-     || -1 == hws_timer_set(&hws->timer, 1, 0, 1, 0)) {
+    if (-1 == hws_timer_create(hws, &hws->timer, config->error_string)
+     || -1 == hws_timer_set(&hws->timer, 1, 0, 1, 0, config->error_string)) {
         goto error;
     }
 
@@ -1123,14 +1278,29 @@ HWS_VISIBILITY_IMPL void hws_destroy(hws_t* hws)
         hws_socket_destroy(hws, socket);
     }
 
-    close(hws->timer.fd);
-    close(hws->epoll_fd);
+#ifdef HWS_HAVE_OPENSSL
+    if (NULL != hws->ssl_context) {
+        SSL_CTX_free(hws->ssl_context);
+    }
+#endif
+    if (-1 != hws->timer.fd) {
+        close(hws->timer.fd);
+    }
+    if (-1 != hws->epoll_fd) {
+        close(hws->epoll_fd);
+    }
     free(hws);
 }
 
 HWS_VISIBILITY_IMPL int hws_get_fd(hws_t* hws)
 {
     return NULL != hws ? hws->epoll_fd : -1;
+}
+
+HWS_VISIBILITY_IMPL char const* hws_get_error_string(hws_t* hws)
+{
+    assert(NULL != hws);
+    return hws->error_string;
 }
 
 HWS_VISIBILITY_IMPL void* hws_get_user_data(hws_t* hws)
@@ -1152,13 +1322,96 @@ HWS_VISIBILITY_IMPL int hws_stop(hws_t* hws)
     hws->stop = 1;
 
     /* Modify timer to immediately fire and exit epoll_wait. */
-    return hws_timer_set(&hws->timer, 0, 1, 1, 0);
+    return hws_timer_set(&hws->timer, 0, 1, 1, 0, hws->error_string);
 }
 
 HWS_VISIBILITY_IMPL int hws_poll(hws_t* hws)
 {
     assert(NULL != hws);
     return hws_run(hws, 0);
+}
+
+HWS_VISIBILITY hws_socket_t* hws_socket_connect(hws_t* hws,
+    hws_socket_connect_config_t const* config,
+    hws_socket_callbacks_t const* callbacks)
+{
+    assert(NULL != hws);
+    assert(NULL != connect);
+    assert(NULL != callbacks);
+    
+    hws_socket_t* sock = NULL;
+    int fd = -1;
+#ifdef HWS_HAVE_OPENSSL
+    SSL* ssl = NULL;
+#endif
+
+    /* Create a stream socket for address' family. */
+    fd = socket(config->address.sa_family, SOCK_STREAM, 0);
+    if (-1 == fd) {
+        return NULL;
+    }
+
+#ifdef HWS_HAVE_OPENSSL
+    /* Create SSL context, if not created. */
+    if (NULL == hws->ssl_context) {
+        // TODO
+    }
+
+    /* Create an SSL structure. */
+    ssl = SSL_new(hws->ssl_context);
+    if (NULL == ssl) {
+        goto error;
+    }
+
+    /* Create a socket structure for fd, ssl and callbacks. */
+    sock = hws_socket_create(hws, fd, ssl, callbacks);
+#else
+
+    /* Create a socket structure for fd, ssl and callbacks. */
+    sock = hws_socket_create(hws, fd, callbacks);
+#endif
+    if (NULL == sock) {
+        goto error;
+    }
+
+    /* Reset variables now owned by socket. */
+    fd = -1;
+#ifdef HWS_HAVE_OPENSSL
+    ssl = NULL;
+#endif
+
+    /* Override state. */
+    sock->state = HWS_STATE_CONNECTING;
+
+    /* Determine socket address length. */
+    socklen_t length;
+    switch (config->address.sa_family) {
+    case AF_INET:   length = sizeof(struct sockaddr_in); break;
+    case AF_INET6:  length = sizeof(struct sockaddr_in6); break;
+    default:
+        /* Unsupported address family. */
+        goto error;
+    }
+
+    /* Connect, expect EINPROGRESS error. */
+    if (-1 == connect(sock->socket.fd, &config->address, length)
+     && EINPROGRESS != errno) {
+        goto error;
+    }
+
+    /* TODO complete connect handshake and HTTP. */
+    return sock;
+
+error:
+    hws_socket_destroy(hws, sock);
+
+    if (NULL != ssl) {
+        SSL_free(ssl);
+    }
+    if (-1 != fd) {
+        close(fd);
+    }
+    return NULL;
 }
 
 #ifdef HWS_HAVE_OPENSSL
@@ -1171,9 +1424,11 @@ HWS_VISIBILITY_IMPL hws_socket_t* hws_socket_create(hws_t* hws, int fd,
 {
     assert(NULL != hws);
     assert(fd >= 0);
+    assert(NULL != callbacks);
 
     hws_socket_t* socket = (hws_socket_t*)calloc(1, sizeof(hws_socket_t));
     if (NULL == socket) {
+        snprintf(hws->error_string, HWS_MAX_ERROR_STRING, "calloc() failed");
         goto error;
     }
 
@@ -1199,13 +1454,23 @@ HWS_VISIBILITY_IMPL hws_socket_t* hws_socket_create(hws_t* hws, int fd,
     socket->user_data = socket->user_storage;
 #endif
 
+    int flags;
+
+    /* Make socket non-blocking. */
+    if ( -1 == (flags = fcntl(fd, F_GETFL, 0))
+      || -1 == fcntl(fd, F_SETFL, flags|O_NONBLOCK)) {
+        hws_set_error_string(hws->error_string,
+            "fcntl(...O_NONBLOCK...) failed");
+        goto error;
+    }
+
     /* Create interrupt timer. */
-    if (-1 == hws_timer_create(hws, &socket->interrupt)) {
+    if (-1 == hws_timer_create(hws, &socket->interrupt, hws->error_string)) {
         goto error;
     }
 
     /* Add socket to epoll facility. */
-    if (-1 == hws_event_add(hws, &socket->socket, EPOLLIN)) {
+    if (-1 == hws_event_add(hws, socket, &socket->socket, EPOLLIN)) {
         goto error;
     }
 
@@ -1269,20 +1534,33 @@ HWS_VISIBILITY_IMPL hws_state_t hws_socket_get_state(hws_socket_t* socket)
 HWS_VISIBILITY_IMPL int hws_socket_get_peer(
     hws_socket_t* socket, struct sockaddr *peer_address, socklen_t* length)
 {
-    return getpeername(socket->socket.fd,
-        (struct sockaddr*)peer_address, length);
+    assert(NULL != socket);
+
+    if (-1 == getpeername(socket->socket.fd,
+            (struct sockaddr*)peer_address, length)) {
+        hws_set_error_string(socket->error_string, "getpeername() failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 HWS_VISIBILITY_IMPL int hws_socket_set_nodelay(hws_socket_t* socket, int enable)
 {
     assert(NULL != socket);
-    return setsockopt(socket->socket.fd,
-        IPPROTO_TCP, TCP_NODELAY, (char *)&enable, sizeof(enable));
+
+    if (-1 == setsockopt(socket->socket.fd,
+            IPPROTO_TCP, TCP_NODELAY, (char *)&enable, sizeof(enable))) {
+        hws_set_error_string(socket->error_string, "setsockopt() failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 HWS_VISIBILITY_IMPL int hws_socket_interrupt(hws_socket_t* socket)
 {
-    return hws_timer_set(&socket->interrupt, 0, 1, 0, 0);
+    return hws_timer_set(&socket->interrupt, 0, 1, 0, 0, socket->error_string);
 }
 
 HWS_VISIBILITY_IMPL void hws_socket_receive_disable(hws_socket_t* socket)
@@ -1442,6 +1720,24 @@ HWS_VISIBILITY_IMPL int hws_socket_send_masked(hws_t* hws, hws_socket_t* socket,
 
     socket->flags |= HWS_SEND_HEADER;
     return hws_event_modify(hws, socket);
+}
+
+HWS_VISIBILITY_IMPL char const* hws_socket_get_error_string(
+    hws_socket_t* socket)
+{
+    assert(NULL != socket);
+    return socket->error_string;
+}
+
+HWS_VISIBILITY_IMPL void hws_socket_set_error_string(hws_socket_t* socket,
+    char const* format, ...)
+{
+    assert(NULL != socket);
+
+    va_list ap;
+    va_start(ap, format);
+    vsnprintf(socket->error_string, HWS_MAX_ERROR_STRING, format, ap);
+    va_end(ap);
 }
 
 HWS_VISIBILITY_IMPL void hws_sha1(uint8_t *digest,

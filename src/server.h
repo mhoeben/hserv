@@ -37,8 +37,8 @@
 #define SERVER_DEFAULT_FLAGS                0x00
 #define SERVER_DEFAULT_PORT                 8080
 #define SERVER_DEFAULT_INDEX_FILE           "index.html"
-#define SERVER_DEFAULT_CERTIFICATE_FILE     "cert.pem"
-#define SERVER_DEFAULT_PRIVATE_KEY_FILE     "key.pem"
+#define SERVER_DEFAULT_CERTIFICATE_FILE     "/etc/ssl/certs/ssl-cert-snakeoil.pem"
+#define SERVER_DEFAULT_PRIVATE_KEY_FILE     "/etc/ssl/private/ssl-cert-snakeoil.key"
 
 typedef struct server_s
 {
