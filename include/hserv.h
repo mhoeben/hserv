@@ -2484,7 +2484,7 @@ HSERV_VISIBILITY_IMPL hserv_t* hserv_create(hserv_config_t* config)
     case AF_INET: socklen = sizeof(struct sockaddr_in); break;
     case AF_INET6: socklen = sizeof(struct sockaddr_in6); break;
     default:
-        snprintf(config->error_string, HWS_MAX_ERROR_STRING,
+        snprintf(config->error_string, HSERV_MAX_ERROR_STRING,
             "Invalid or unsupported address family");
         goto error;
     }
