@@ -1336,7 +1336,7 @@ HWS_VISIBILITY hws_socket_t* hws_socket_connect(hws_t* hws,
     hws_socket_callbacks_t const* callbacks)
 {
     assert(NULL != hws);
-    assert(NULL != connect);
+    assert(NULL != config);
     assert(NULL != callbacks);
     
     hws_socket_t* sock = NULL;
