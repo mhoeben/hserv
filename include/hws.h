@@ -1076,7 +1076,6 @@ send:
 
 closed:
     socket->state = HWS_STATE_CLOSED;
-
     socket->callbacks.closed(hws, socket, closed_clean);
     hws_socket_destroy(hws, socket);
     return 0;
@@ -1106,6 +1105,7 @@ static int hws_on_timer(hws_t* hws, struct epoll_event* event)
         it = it->next;
 
         if (r < 0) {
+            socket->state = HWS_STATE_CLOSED;
             socket->callbacks.closed(hws, socket, 0);
             hws_socket_destroy(hws, socket);
         }
@@ -1146,6 +1146,7 @@ static int hws_run(hws_t* hws, int timeout)
                 /* Socket returned an error, notify user and destroy socket. */
                 hws_socket_t* socket =
                     (hws_socket_t*)hws_event_user_data(&event);
+                socket->state = HWS_STATE_CLOSED;
                 socket->callbacks.closed(hws, socket, 0);
                 hws_socket_destroy(hws, socket);
             }
