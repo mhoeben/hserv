@@ -703,6 +703,15 @@ static ssize_t hws_recv(hws_t* hws, hws_socket_t* socket,
     r = recv(socket->socket.fd, buffer, size, 0);
     switch (r) { 
     case -1:
+        /* Trying to receive while nothing available? */
+#if EAGAIN != EWOULDBLOCK
+        if (EAGAIN == errno || EWOULDBLOCK == errno) {
+#else
+        if (EAGAIN == errno) {
+#endif
+            return 0;
+        }
+
         hws_set_error_string(socket->error_string, "recv() failed");
         return -1;  /* An error occurred. */
     case 0:
@@ -816,7 +825,7 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         switch (bytes) {
         case -2: goto closed;
         case -1: return -1;
-        case  0: return  0; /* SSL renegotiates, no use to go to send. */
+        case  0: return  0; /* Would block or SSL renegotiates. */
         default:
             break;
         }
@@ -945,8 +954,8 @@ static int hws_socket_on_event(hws_t* hws, struct epoll_event* epoll_event)
         switch (bytes) {
         case -2: goto closed;
         case -1: return -1;
+        case  0: return  0; /* Would block or SSL renegotiates. */
         default:
-            assert(bytes >= 0);
             break;
         }
 
